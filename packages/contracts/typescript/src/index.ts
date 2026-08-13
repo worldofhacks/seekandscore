@@ -78,6 +78,7 @@ export interface TopQueueSnapshot {
   id: string;
   label: string;
   region: string;
+  timeZone: string;
   asOf: string;
   modelVersion: string;
   isSynthetic: boolean;

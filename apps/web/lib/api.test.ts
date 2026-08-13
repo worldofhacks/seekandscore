@@ -45,6 +45,7 @@ const page: ApiCandidatePage = {
 describe("API candidate adapter", () => {
   it("maps the FastAPI wire model into the operator contract and keeps outreach blocked", () => {
     const snapshot = mapApiCandidatePage(page);
+    expect(snapshot.timeZone).toBe("America/Chicago");
     expect(snapshot.candidates).toHaveLength(1);
     expect(snapshot.candidates[0]).toMatchObject({
       name: "Synthetic API parcel",

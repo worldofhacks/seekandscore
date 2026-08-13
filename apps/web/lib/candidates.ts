@@ -636,6 +636,7 @@ export const topQueueSnapshot: TopQueueSnapshot = {
   id: "ctx-top25-2026-08-12",
   label: "Top 25",
   region: "Central Texas",
+  timeZone: "America/Chicago",
   asOf: "2026-08-12T07:30:00-05:00",
   modelVersion: "central-texas-v1 · draft",
   isSynthetic: true,

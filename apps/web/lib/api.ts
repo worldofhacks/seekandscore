@@ -116,6 +116,7 @@ export function mapApiCandidatePage(page: ApiCandidatePage): TopQueueSnapshot {
     id: `api-${page.read_model_version}`,
     label: "API candidates",
     region: "Central Texas",
+    timeZone: first?.timezone ?? "UTC",
     asOf: first?.as_of ?? new Date(0).toISOString(),
     modelVersion: `${page.read_model_version} · API contract`,
     isSynthetic: page.dataset_mode === "synthetic",

@@ -26,6 +26,7 @@ import {
   formatMoneyCompact,
   rankMovement,
 } from "@/lib/candidates";
+import { formatAsOf, formatObserved } from "@/lib/dates";
 
 const filters: Array<{ id: QueueFilter; label: string }> = [
   { id: "all", label: "All" },
@@ -41,25 +42,6 @@ const evidenceLabels: Record<EvidenceStatus, string> = {
   conflicting: "Conflicting",
   unknown: "Unknown",
 };
-
-function formatAsOf(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
-  }).format(new Date(value));
-}
-
-function formatObserved(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(new Date(value));
-}
 
 function ScoreRing({ score }: { score: number }) {
   return (
@@ -193,7 +175,13 @@ function QueueTable({
   );
 }
 
-function EvidencePanel({ candidate }: { candidate: CandidateSummary }) {
+function EvidencePanel({
+  candidate,
+  timeZone,
+}: {
+  candidate: CandidateSummary;
+  timeZone: string;
+}) {
   return (
     <div className="detail-panel__content" id="evidence-content" role="tabpanel">
       <section className="decision-read" aria-labelledby="decision-read-heading">
@@ -250,7 +238,7 @@ function EvidencePanel({ candidate }: { candidate: CandidateSummary }) {
                 </div>
                 <p className="evidence-list__value">{datum.value}</p>
                 <p className="evidence-list__source">
-                  {datum.source} · {formatObserved(datum.observedAt)}
+                  {datum.source} · {formatObserved(datum.observedAt, timeZone)}
                 </p>
               </div>
             </li>
@@ -383,7 +371,13 @@ function OutreachPanel({ candidate }: { candidate: CandidateSummary }) {
   );
 }
 
-function CandidateDetail({ candidate }: { candidate: CandidateSummary }) {
+function CandidateDetail({
+  candidate,
+  timeZone,
+}: {
+  candidate: CandidateSummary;
+  timeZone: string;
+}) {
   const [activeTab, setActiveTab] = useState<"evidence" | "outreach">("evidence");
 
   return (
@@ -428,7 +422,7 @@ function CandidateDetail({ candidate }: { candidate: CandidateSummary }) {
       </div>
 
       {activeTab === "evidence" ? (
-        <EvidencePanel candidate={candidate} />
+        <EvidencePanel candidate={candidate} timeZone={timeZone} />
       ) : (
         <div id="outreach-panel">
           <OutreachPanel candidate={candidate} />
@@ -491,7 +485,7 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
         <div className="topbar-meta">
           <span className="topbar-asof">
             <ClockIcon />
-            As of {formatAsOf(snapshot.asOf)}
+            As of {formatAsOf(snapshot.asOf, snapshot.timeZone)}
           </span>
           <span aria-label="Current user: Operator" className="avatar">
             OP
@@ -599,7 +593,9 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
             />
           </Panel>
 
-          {selectedCandidate ? <CandidateDetail candidate={selectedCandidate} /> : null}
+          {selectedCandidate ? (
+            <CandidateDetail candidate={selectedCandidate} timeZone={snapshot.timeZone} />
+          ) : null}
         </div>
 
         <footer className="workspace-footer">
