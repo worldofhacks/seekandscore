@@ -27,7 +27,7 @@ import {
   filterCandidates,
   formatMoneyCompact,
   rankMovement,
-} from "@/lib/candidates";
+} from "@/lib/queue";
 import { formatAsOf, formatObserved } from "@/lib/dates";
 import { candidateScoreLabel, candidateValueDisplay } from "@/lib/presentation";
 
@@ -47,26 +47,29 @@ const evidenceLabels: Record<EvidenceStatus, string> = {
 };
 
 const datasetStatusLabels: Record<DatasetHealthStatus, string> = {
-  synthetic: "Synthetic",
   current: "Current",
   stale: "Stale",
   partial: "Partial",
   error: "Error",
-  fallback: "Fallback",
+  rights_disabled: "Display disabled",
+  unavailable: "Unavailable",
   unknown: "Unknown",
 };
 
 function datasetModeLabel(snapshot: TopQueueSnapshot): string {
-  if (snapshot.provenance.isFallback) return "Synthetic fallback";
   if (snapshot.provenance.mode === "live") return "Live data";
-  if (snapshot.provenance.mode === "mixed") return "Mixed data";
-  if (snapshot.provenance.mode === "synthetic") return "Synthetic data";
-  return "Dataset unknown";
+  return "No live dataset";
 }
 
 function statusTone(status: DatasetHealthStatus): "accent" | "outline" | "blocked" {
   if (status === "current") return "accent";
-  if (status === "error" || status === "fallback") return "blocked";
+  if (
+    status === "error" ||
+    status === "rights_disabled" ||
+    status === "unavailable"
+  ) {
+    return "blocked";
+  }
   return "outline";
 }
 
@@ -118,20 +121,23 @@ function SourceRow({ source, timeZone }: { source: DataSourceProvenance; timeZon
 function DataProvenancePanel({ snapshot }: { snapshot: TopQueueSnapshot }) {
   const { provenance } = snapshot;
   const primarySource = provenance.sources[0];
-  const needsAttention = ["stale", "partial", "error", "fallback", "unknown"].includes(
-    provenance.status,
+  const needsAttention = provenance.status !== "current";
+  const additionalWarnings = provenance.warnings.filter(
+    (warning) => warning !== provenance.statusDetail,
   );
-  const heading = provenance.isFallback
-    ? "Live data unavailable — showing a synthetic fallback"
+  const heading = provenance.status === "rights_disabled"
+    ? "Live source display is disabled"
     : provenance.status === "error"
-      ? "The requested dataset is unavailable"
+      ? "Live candidate data could not be loaded"
+      : provenance.status === "unavailable"
+        ? "No verified live candidate data"
       : provenance.status === "partial"
-        ? "This dataset is only partially available"
+        ? "The live dataset is only partially available"
         : provenance.status === "stale"
-          ? "This dataset is outside its freshness target"
-          : provenance.mode === "live"
+          ? "The live dataset is outside its freshness target"
+          : provenance.status === "current"
             ? "Live source-backed parcel data"
-            : "Synthetic data for product validation";
+            : "Live dataset status is unknown";
 
   return (
     <section
@@ -146,9 +152,7 @@ function DataProvenancePanel({ snapshot }: { snapshot: TopQueueSnapshot }) {
         <div>
           <div className="data-provenance__badges">
             <Badge
-              tone={
-                provenance.mode === "live" && !provenance.isFallback ? "accent" : "outline"
-              }
+              tone={provenance.mode === "live" ? "accent" : "outline"}
             >
               {datasetModeLabel(snapshot)}
             </Badge>
@@ -158,9 +162,9 @@ function DataProvenancePanel({ snapshot }: { snapshot: TopQueueSnapshot }) {
           </div>
           <h2 id="data-provenance-heading">{heading}</h2>
           <p>
-            {provenance.fallbackReason ??
+            {provenance.statusDetail ??
               provenance.warnings[0] ??
-              "Review source dates and evidence before acting on any screening result."}
+              "Review source dates and evidence before acting on any live screening result."}
           </p>
         </div>
       </div>
@@ -222,9 +226,9 @@ function DataProvenancePanel({ snapshot }: { snapshot: TopQueueSnapshot }) {
         </details>
       ) : null}
 
-      {provenance.warnings.length > 1 ? (
+      {additionalWarnings.length ? (
         <ul aria-label="Dataset warnings" className="data-provenance__warnings">
-          {provenance.warnings.slice(1).map((warning) => (
+          {additionalWarnings.map((warning) => (
             <li key={warning}>{warning}</li>
           ))}
         </ul>
@@ -279,10 +283,14 @@ function RankMovement({ candidate }: { candidate: CandidateSummary }) {
 
 function QueueTable({
   candidates,
+  emptyDetail,
+  emptyTitle,
   selectedId,
   onSelect,
 }: {
   candidates: CandidateSummary[];
+  emptyDetail?: string;
+  emptyTitle?: string;
   selectedId: string;
   onSelect: (candidate: CandidateSummary) => void;
 }) {
@@ -292,8 +300,11 @@ function QueueTable({
         <span aria-hidden="true" className="empty-state__mark">
           0
         </span>
-        <h3>No candidates match this view</h3>
-        <p>Clear the search or switch filters. The underlying ranking snapshot is unchanged.</p>
+        <h3>{emptyTitle ?? "No candidates match this view"}</h3>
+        <p>
+          {emptyDetail ??
+            "Clear the search or switch filters. The underlying live ranking snapshot is unchanged."}
+        </p>
       </div>
     );
   }
@@ -672,6 +683,13 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
     (candidate) => candidate.screeningOnly,
   );
   const hasCandidates = snapshot.candidates.length > 0;
+  const rightsDisabled = snapshot.provenance.status === "rights_disabled";
+  const emptyTitle = rightsDisabled
+    ? "Live records are not approved for display"
+    : "No verified live candidates";
+  const emptyDetail = rightsDisabled
+    ? "A private source run may exist, but parcel observations stay excluded until display rights are approved."
+    : "The console remains empty until the API returns a verified live-only candidate dataset.";
 
   function reviewChanges() {
     setFilter("new");
@@ -720,16 +738,16 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
             <div className="eyebrow-row">
               <span>
                 {!hasCandidates
-                  ? "Dataset status"
+                  ? rightsDisabled
+                    ? "Display control"
+                    : "Live dataset status"
                   : hasScreeningCandidates
                     ? "Parcel screening"
-                    : snapshot.isSynthetic
-                      ? "Synthetic candidate preview"
-                      : "Investment queue"}
+                    : "Investment queue"}
               </span>
               <Badge
                 tone={
-                  snapshot.provenance.mode === "live" && !snapshot.provenance.isFallback
+                  snapshot.provenance.mode === "live" && hasCandidates
                     ? "accent"
                     : "outline"
                 }
@@ -739,21 +757,21 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
             </div>
             <h1>
               {!hasCandidates
-                ? "Candidate data is unavailable"
+                ? rightsDisabled
+                  ? "Live source records are withheld from this console"
+                  : "No verified live candidates"
                 : hasScreeningCandidates
                   ? "Source-backed parcels for research"
-                  : snapshot.isSynthetic
-                    ? "Synthetic candidates for product validation"
-                    : "Best opportunities, right now"}
+                  : "Verified live opportunities"}
             </h1>
             <p>
               {!hasCandidates
-                ? "Review the dataset status and source provenance below. No candidate or outreach action is available from this snapshot."
+                ? rightsDisabled
+                  ? "Live acquisition may run privately for rights review, but no parcel observations, values, or parties are published here."
+                  : "No candidate or outreach action is available. Unverified records are never shown."
                 : hasScreeningCandidates
                   ? `A research-only screen of ${snapshot.region} parcel observations. Source values and unknowns remain explicit.`
-                  : snapshot.isSynthetic
-                    ? `A deterministic preview of ${snapshot.region} candidate fixtures. Every record is fictional and non-actionable.`
-                    : `A ranked, explainable review of ${snapshot.region} candidates. Unknowns stay visible; every decision traces back to evidence.`}
+                  : `A ranked, explainable review of verified ${snapshot.region} records. Unknowns stay visible; every decision traces back to evidence.`}
             </p>
           </div>
           <Button disabled={!hasCandidates} onClick={reviewChanges} variant="primary">
@@ -764,36 +782,63 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
 
         <DataProvenancePanel snapshot={snapshot} />
 
-        <section aria-label="Queue summary" className="metric-grid">
-          <Panel className="metric-card">
-            <span>{snapshot.isSynthetic ? "Fixture queue" : "Active queue"}</span>
-            <strong>{snapshot.candidates.length}</strong>
-            <p>
-              {snapshot.isSynthetic
-                ? "Fictional records for interface validation"
-                : hasScreeningCandidates
+        {hasCandidates ? (
+          <section aria-label="Live queue summary" className="metric-grid">
+            <Panel className="metric-card">
+              <span>Verified live queue</span>
+              <strong>{snapshot.candidates.length}</strong>
+              <p>
+                {hasScreeningCandidates
                   ? "Source records available for research"
                   : "Eligible after minimum data gates"}
-            </p>
-          </Panel>
-          <Panel className="metric-card">
-            <span>Changed</span>
-            <strong>{changedCount}</strong>
-            <p>New or materially moved records</p>
-          </Panel>
-          <Panel className="metric-card">
-            <span>Needs review</span>
-            <strong>{reviewCount}</strong>
-            <p>Unknown or conflicting evidence</p>
-          </Panel>
-          <Panel className="metric-card">
-            <span>Average confidence</span>
-            <strong>{averageConfidence}%</strong>
-            <p>Across this ranking snapshot</p>
-          </Panel>
-        </section>
+              </p>
+            </Panel>
+            <Panel className="metric-card">
+              <span>Changed</span>
+              <strong>{changedCount}</strong>
+              <p>New or materially moved records</p>
+            </Panel>
+            <Panel className="metric-card">
+              <span>Needs review</span>
+              <strong>{reviewCount}</strong>
+              <p>Unknown or conflicting evidence</p>
+            </Panel>
+            <Panel className="metric-card">
+              <span>Average confidence</span>
+              <strong>{averageConfidence}%</strong>
+              <p>Across this live ranking snapshot</p>
+            </Panel>
+          </section>
+        ) : (
+          <section aria-label="Live data controls" className="metric-grid">
+            <Panel className="metric-card">
+              <span>Published candidates</span>
+              <strong>0</strong>
+              <p>Only verified live records can enter the console</p>
+            </Panel>
+            <Panel className="metric-card">
+              <span>Source mode</span>
+              <strong className="metric-card__status">
+                {snapshot.provenance.mode === "live" ? "Live" : "Unknown"}
+              </strong>
+              <p>Reported by the candidate API</p>
+            </Panel>
+            <Panel className="metric-card">
+              <span>Display rights</span>
+              <strong className="metric-card__status">
+                {rightsDisabled ? "Disabled" : "Not verified"}
+              </strong>
+              <p>Public parcel display fails closed</p>
+            </Panel>
+            <Panel className="metric-card">
+              <span>Outbound outreach</span>
+              <strong className="metric-card__status">Disabled</strong>
+              <p>No candidate data can activate communication</p>
+            </Panel>
+          </section>
+        )}
 
-        <div className="console-grid">
+        <div className={`console-grid${selectedCandidate ? "" : " console-grid--empty"}`}>
           <Panel className="queue-panel" id="candidate-queue">
             <header className="queue-panel__header">
               <div>
@@ -802,13 +847,13 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
                   <Badge tone="accent">
                     {hasScreeningCandidates
                       ? "Research only"
-                      : snapshot.isSynthetic
-                        ? "Synthetic fixtures"
-                        : "Shadow mode"}
+                      : rightsDisabled
+                        ? "Display disabled"
+                        : "Awaiting live data"}
                   </Badge>
                 </div>
                 <p>
-                  {snapshot.modelVersion} · stable ranking snapshot
+                  {snapshot.modelVersion} · {hasCandidates ? "stable live snapshot" : "no publishable records"}
                 </p>
               </div>
               <div className="queue-search">
@@ -817,6 +862,7 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
                   Search candidates
                 </label>
                 <input
+                  disabled={!hasCandidates}
                   id="candidate-search"
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search candidates"
@@ -832,6 +878,7 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
                 {filters.map((item) => (
                   <button
                     aria-pressed={filter === item.id}
+                    disabled={!hasCandidates}
                     key={item.id}
                     onClick={() => setFilter(item.id)}
                     type="button"
@@ -849,6 +896,8 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
 
             <QueueTable
               candidates={filteredCandidates}
+              emptyDetail={hasCandidates ? undefined : emptyDetail}
+              emptyTitle={hasCandidates ? undefined : emptyTitle}
               onSelect={(candidate) => {
                 setSelectedId(candidate.id);
                 setAnnouncement(`${candidate.name} selected.`);
@@ -864,11 +913,11 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
 
         <footer className="workspace-footer">
           <p>
-            {snapshot.isSynthetic
-              ? "Synthetic product preview. Scores, parties, values, and parcels are fictional. "
-              : "Source-backed parcel screening. Assessor observations and screening scores are not offers, acquisition basis, or independent valuations. "}
-            Data availability never activates owner outreach. Nothing shown is investment,
-            legal, tax, engineering, or valuation advice.
+            {hasCandidates
+              ? "Source-backed parcel screening. Assessor observations and screening scores are not offers, acquisition basis, or independent valuations. "
+              : "No property candidate records are currently displayed, and no unverified records are used. "}
+            Data availability never activates owner outreach. Nothing shown is investment, legal,
+            tax, engineering, or valuation advice.
           </p>
           <a href="/api/health">
             Service health

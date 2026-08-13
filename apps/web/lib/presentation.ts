@@ -1,6 +1,6 @@
 import type { CandidateSummary } from "@seekandscore/contracts";
 
-import { formatMoneyCompact } from "./candidates";
+import { formatMoneyCompact } from "./queue";
 
 export interface CandidateValueDisplay {
   label: string;
@@ -53,11 +53,9 @@ export function candidateValueDisplay(candidate: CandidateSummary): CandidateVal
   }
 
   return {
-    label: "Value range",
-    value: `${formatMoneyCompact(candidate.valueRange.low)}–${formatMoneyCompact(
-      candidate.valueRange.high,
-    )}`,
-    subline: `Scenario basis ${formatMoneyCompact(candidate.likelyBasis)}`,
+    label: "Source value observation",
+    value: "Not supplied",
+    subline: "No verified source value",
     observed: false,
   };
 }

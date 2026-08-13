@@ -17,7 +17,7 @@ This is the Phase 0 control document, not permission to automate any source. A s
 
 | Jurisdiction | Capability | Candidate authority/source | MVP mechanism | Status | Primary unknown |
 |---|---|---|---|---|---|
-| Travis | assessor/parcel | Travis County TNR monthly TCAD ArcGIS layer | bounded paginated query | rights_review | automated reuse, retention/display/export rights |
+| Travis | assessor/parcel | Travis County TNR monthly TCAD ArcGIS layer | bounded paginated query | approved | Reference display only; export, redistribution, and owner/contact use prohibited by project policy |
 | Bastrop | assessor/parcel | Bastrop CAD official certified/GIS ZIPs | official bulk download after disclaimer | rights_review | disclaimer scope, retention/display/export rights |
 | Caldwell | assessor/parcel | Caldwell CAD annual public exports | official bulk download | rights_review | retention/display/export rights, geometry |
 | Travis | tax delinquency/foreclosure | Travis County Tax Office daily CSV and sale pages | official bulk file; sale page later | rights_review | retention/display rights, event withdrawal/history |
@@ -79,3 +79,5 @@ outreach eligibility, consent/permission requirements, and suppression handling,
 - [ ] Shadow output reviewed against source
 - [ ] Production activation approved
 - [ ] Contact or outreach use separately approved when the capability includes personal/contact data
+
+The Travis TNR/TCAD record completed the access, exact ItemInfo, schema, bounded-query, immutable-storage, replay, attribution, and display-scope checks on August 13, 2026. Its approval is not transferable to TCAD's separate PDF map-download page, owner/contact fields, exports, bulk redistribution, or outreach.

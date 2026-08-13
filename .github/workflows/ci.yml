@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "agent/**"]
 
 permissions:
   contents: read
@@ -61,7 +61,7 @@ jobs:
       APP_ENV: test
       DATABASE_URL: postgresql+psycopg://seekandscore:seekandscore@localhost:5432/seekandscore_test
       REDIS_URL: redis://localhost:6379/15
-      DATASET_MODE: synthetic
+      DATASET_MODE: live
       INGESTION_ENABLED: "false"
       OUTREACH_MODE: disabled
       OUTREACH_SEND_ENABLED: "false"

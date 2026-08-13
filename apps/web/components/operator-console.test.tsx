@@ -1,120 +1,169 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { TopQueueSnapshot } from "@seekandscore/contracts";
+import type { CandidateSummary, TopQueueSnapshot } from "@seekandscore/contracts";
 
-import { topQueueSnapshot } from "@/lib/candidates";
-
+import { AppShell } from "./app-shell";
 import { OperatorConsole } from "./operator-console";
 
-describe("operator data provenance", () => {
-  it("exposes fallback mode, source timestamps, and warnings in accessible markup", () => {
-    const snapshot: TopQueueSnapshot = {
-      ...topQueueSnapshot,
-      provenance: {
-        ...topQueueSnapshot.provenance,
-        status: "fallback",
-        isFallback: true,
-        fallbackReason: "The live candidate API timed out.",
-        warnings: [
-          "The live candidate API timed out.",
-          "This is not a live investment queue.",
-        ],
+function liveCandidate(): CandidateSummary {
+  return {
+    id: "candidate-1",
+    rank: 1,
+    previousRank: null,
+    name: "East Austin assessor parcel",
+    locality: "Austin, TX",
+    county: "Travis",
+    parcelId: "TCAD-700001",
+    acreage: 2.4,
+    strategy: "Parcel screening",
+    queueState: "research",
+    overallScore: 67.4,
+    confidence: 0.72,
+    valueRange: { low: 1_250_000, high: 1_250_000 },
+    likelyBasis: 0,
+    thesis: "Live assessor screening for research only.",
+    nextAction: "Verify parcel geometry and Opportunity Zone overlay.",
+    newSinceLastReview: true,
+    materialChange: null,
+    risks: [
+      {
+        id: "risk-1",
+        label: "Opportunity Zone status unverified",
+        detail: "A versioned spatial overlay has not completed.",
+        severity: "watch",
       },
-    };
+    ],
+    evidence: [
+      {
+        id: "evidence-1",
+        label: "Assessor value observation",
+        value: "Appraised $1,250,000",
+        status: "verified",
+        source: "travis_tcad_parcels",
+        observedAt: "2026-08-13T10:30:00Z",
+      },
+    ],
+    screeningOnly: true,
+    sourceObservation: {
+      sourceId: "travis_tcad_parcels",
+      sourceRecordId: "OBJECTID-42",
+      artifactSha256: "a".repeat(64),
+      retrievedAt: "2026-08-13T10:30:00Z",
+      fields: { appraisedValueCents: 125_000_000 },
+    },
+    outreachGate: {
+      status: "blocked",
+      reviewedChecks: 0,
+      totalChecks: 5,
+      blockers: [
+        "Owner and authorized-representative data are not present",
+        "All outbound channels are disabled",
+      ],
+    },
+  };
+}
 
-    const markup = renderToStaticMarkup(<OperatorConsole snapshot={snapshot} />);
+function snapshotWithLiveCandidate(): TopQueueSnapshot {
+  return {
+    id: "live-snapshot",
+    label: "Verified live candidates",
+    region: "Central Texas",
+    timeZone: "America/Chicago",
+    asOf: "2026-08-13T10:30:00Z",
+    modelVersion: "live-candidate-v1 · API contract",
+    provenance: {
+      mode: "live",
+      status: "current",
+      retrievedAt: "2026-08-13T10:30:00Z",
+      publishedAt: null,
+      staleAfter: "2026-09-27T10:30:00Z",
+      statusDetail: null,
+      warnings: [],
+      sources: [
+        {
+          id: "travis_tcad_parcels",
+          name: "Travis County TNR / TCAD parcel layer",
+          status: "current",
+          retrievedAt: "2026-08-13T10:30:00Z",
+          publishedAt: null,
+          recordCount: 1,
+        },
+      ],
+    },
+    candidates: [liveCandidate()],
+  };
+}
 
-    expect(markup).toContain("Live data unavailable — showing a synthetic fallback");
-    expect(markup).toContain("Synthetic fallback");
-    expect(markup).toContain("The live candidate API timed out.");
-    expect(markup).toContain('id="data-provenance-heading"');
-    expect(markup).toContain("Source provenance");
-    expect(markup).toContain("This is not a live investment queue.");
-    expect(markup).toContain("dateTime=");
-    expect(markup).toContain("Synthetic candidates for product validation");
-    expect(markup).toContain("Synthetic fixtures");
-    expect(markup).not.toContain("Best opportunities, right now");
-  });
+function emptySnapshot(
+  status: "error" | "rights_disabled" | "unavailable",
+): TopQueueSnapshot {
+  const rightsDisabled = status === "rights_disabled";
+  return {
+    id: `empty-${status}`,
+    label: "Verified live candidates",
+    region: "Central Texas",
+    timeZone: "America/Chicago",
+    asOf: null,
+    modelVersion: "Live candidate contract · no publishable dataset",
+    provenance: {
+      mode: rightsDisabled ? "live" : "unknown",
+      status,
+      retrievedAt: null,
+      publishedAt: null,
+      staleAfter: null,
+      statusDetail: rightsDisabled
+        ? "Live observations are for internal rights review; public display is disabled."
+        : "The live candidate API was unavailable or timed out.",
+      sources: [],
+      warnings: [],
+    },
+    candidates: [],
+  };
+}
 
+describe("strict live operator console", () => {
   it("labels assessor values and screening scores as research-only observations", () => {
-    const candidate = {
-      ...topQueueSnapshot.candidates[0],
-      strategy: "Parcel screening" as const,
-      screeningOnly: true,
-      sourceObservation: {
-        sourceId: "travis-tcad-arcgis",
-        sourceRecordId: "OBJECTID-42",
-        artifactSha256: "a".repeat(64),
-        retrievedAt: "2026-08-13T10:30:00Z",
-        fields: { appraisedValueCents: 125_000_000 },
-      },
-    };
-    const snapshot: TopQueueSnapshot = {
-      ...topQueueSnapshot,
-      isSynthetic: false,
-      candidates: [candidate],
-      provenance: {
-        mode: "live",
-        status: "current",
-        retrievedAt: "2026-08-13T10:30:00Z",
-        publishedAt: "2026-08-01T05:00:00Z",
-        staleAfter: "2026-09-15T05:00:00Z",
-        isFallback: false,
-        fallbackReason: null,
-        warnings: [],
-        sources: [
-          {
-            id: "travis-tcad-arcgis",
-            name: "Travis County TNR/TCAD parcel layer",
-            status: "current",
-            retrievedAt: "2026-08-13T10:30:00Z",
-            publishedAt: "2026-08-01T05:00:00Z",
-            recordCount: 1,
-          },
-        ],
-      },
-    };
-
+    const snapshot = snapshotWithLiveCandidate();
     const markup = renderToStaticMarkup(<OperatorConsole snapshot={snapshot} />);
 
     expect(markup).toContain("Source-backed parcels for research");
     expect(markup).toContain("Research-only screen");
     expect(markup).toContain("Appraised value observation");
     expect(markup).toContain("Assessor observation · not an offer");
-    expect(markup).toContain('aria-label="Screening score 91.8 out of 100"');
+    expect(markup).toContain('aria-label="Screening score 67.4 out of 100"');
     expect(markup).toContain("Opportunity Zone status");
     expect(markup).toContain("Outreach");
   });
 
-  it("renders an explicit non-actionable error state when no dataset is served", () => {
-    const snapshot: TopQueueSnapshot = {
-      ...topQueueSnapshot,
-      isSynthetic: false,
-      asOf: null,
-      candidates: [],
-      provenance: {
-        mode: "live",
-        status: "error",
-        retrievedAt: null,
-        publishedAt: null,
-        staleAfter: null,
-        isFallback: false,
-        fallbackReason: null,
-        sources: [],
-        warnings: ["The official parcel source could not be read."],
-      },
-    };
-
+  it("renders an explicit zero-record error state when live data is unavailable", () => {
+    const snapshot = emptySnapshot("error");
     const markup = renderToStaticMarkup(<OperatorConsole snapshot={snapshot} />);
 
-    expect(markup).toContain("Candidate data is unavailable");
-    expect(markup).toContain("The requested dataset is unavailable");
-    expect(markup).toContain("No candidate or outreach action is available");
+    expect(markup).toContain("No verified live candidates");
+    expect(markup).toContain("Live candidate data could not be loaded");
+    expect(markup).toContain("Published candidates");
+    expect(markup).toContain("Snapshot time unavailable");
     expect(markup).toContain("Review new changes");
     expect(markup).toContain("disabled=\"\"");
-    expect(markup).toContain("Snapshot time unavailable");
-    expect(markup).toContain("Not supplied");
     expect(markup).not.toContain("1970");
+    expect(markup).not.toContain("East Austin assessor parcel");
+  });
+
+  it("explains the private live rights gate without exposing property records", () => {
+    const snapshot = emptySnapshot("rights_disabled");
+    const markup = renderToStaticMarkup(
+      <AppShell snapshot={snapshot}>
+        <OperatorConsole snapshot={snapshot} />
+      </AppShell>,
+    );
+
+    expect(markup).toContain("Live source records are withheld from this console");
+    expect(markup).toContain("Live source display is disabled");
+    expect(markup).toContain("Private source · display disabled");
+    expect(markup).toContain("Published candidates");
+    expect(markup).toContain(">0<");
+    expect(markup).not.toContain("East Austin assessor parcel");
+    expect(markup).toContain("No property records are being displayed");
   });
 });

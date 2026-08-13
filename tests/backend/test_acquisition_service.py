@@ -13,6 +13,7 @@ from seekandscore.acquisition.models import SourceRunStatus
 from seekandscore.acquisition.repository import MemoryAcquisitionRepository
 from seekandscore.acquisition.service import AcquisitionService, IngestionDisabledError
 from seekandscore.acquisition.store import FileArtifactStore
+from seekandscore.registry.sources import TRAVIS_TCAD_ACQUISITION_APPROVAL_ID
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tcad_page.json"
 
@@ -73,7 +74,7 @@ def execute(service: AcquisitionService):  # type: ignore[no-untyped-def]
     return service.execute(
         ingestion_enabled=True,
         dataset_mode="live",
-        activation_id="operator-approved-shadow-20260813",
+        activation_id=TRAVIS_TCAD_ACQUISITION_APPROVAL_ID,
     )
 
 
@@ -194,11 +195,19 @@ def test_external_acquisition_gate_prevents_network_or_storage(tmp_path: Path) -
     assert not repository.runs
 
 
-def test_activation_record_is_required_even_when_live_flags_are_on(tmp_path: Path) -> None:
+@pytest.mark.parametrize("activation_id", [None, "arbitrary-nonempty-approval"])
+def test_exact_activation_record_is_required_even_when_live_flags_are_on(
+    tmp_path: Path,
+    activation_id: str | None,
+) -> None:
     service, requests = build_service(tmp_path, MemoryAcquisitionRepository())
 
-    with pytest.raises(IngestionDisabledError, match="activation/rights"):
-        service.execute(ingestion_enabled=True, dataset_mode="live", activation_id=None)
+    with pytest.raises(IngestionDisabledError, match="approved source acquisition record"):
+        service.execute(
+            ingestion_enabled=True,
+            dataset_mode="live",
+            activation_id=activation_id,
+        )
 
     assert not requests
 

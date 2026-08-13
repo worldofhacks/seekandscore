@@ -145,25 +145,25 @@ Worker configurations omit the API migration command and use queue-specific star
 
 | Environment | Data | Sources | Secrets | Deployment behavior |
 |---|---|---|---|---|
-| `development` | local/synthetic | fixtures/manual | local `.env` | Docker Compose or native tools |
-| `staging` | isolated synthetic/sampled open data | sandbox/low-rate | distinct low-privilege | auto-deploy; outreach `log_only` |
+| `development` | live-only or empty | explicitly activated official sources | local `.env` | Docker Compose or native tools |
+| `staging` | isolated live records | bounded approved sources | distinct low-privilege | pinned deploy; outreach disabled |
 | `production` | real records | approved production access | sealed production | protected main release |
-| PR environment | synthetic fixtures only | production ingestion disabled | no production secrets | focused previews; outreach `disabled`; auto-remove on PR close |
+| PR environment | live-only empty state | ingestion disabled | no source credentials | focused UI previews; outreach `disabled`; auto-remove on PR close |
 
 Railway [environments](https://docs.railway.com/environments) isolate private networks. Sealed variables are not automatically copied to duplicated/PR environments; explicitly provision safe preview credentials.
 
-Preview deployments must set:
+All application deployments must set:
 
 ```text
 INGESTION_ENABLED=false
 ALERT_DELIVERY_MODE=log
-DATASET_MODE=synthetic
+DATASET_MODE=live
 AI_ANALYST_ENABLED=false
 OUTREACH_MODE=disabled
 OUTREACH_SEND_ENABLED=false
 ```
 
-This prevents a UI pull request from scraping sources, contacting owners, or sending real alerts.
+With ingestion disabled and no source credentials, this produces an honest empty state rather than fixture candidates. It also prevents a UI pull request from scraping sources, contacting owners, or sending real alerts.
 
 ## 7. Networking
 
@@ -386,7 +386,7 @@ Railway log throughput/retention is not an audit archive. Store durable audit ev
 ### Gate 0 — before creating Railway resources
 
 - Runnable web/API/worker scaffold exists.
-- Synthetic fixture pipeline and migrations pass locally.
+- Offline parser fixtures and migrations pass locally; fixtures are never runtime candidates.
 - `/livez` and `/readyz` exist.
 - Source ingestion can be globally disabled.
 - Secret inventory and owner are defined.
@@ -399,7 +399,7 @@ Railway log throughput/retention is not an audit archive. Store durable audit ev
 3. Configure object storage and low-privilege staging credentials.
 4. Create `web`, `api`, workers, and scheduler from the GitHub repository.
 5. Assign per-service config paths, watch patterns, commands, and variables.
-6. Run migration owner; load synthetic fixtures.
+6. Run migration owner; verify the live-only empty state before activating a bounded source.
 7. Generate public staging domains only for web/API.
 8. Verify network isolation, health, graceful shutdown, replay, and dead-letter flow.
 9. Configure backups; perform and document a restore.

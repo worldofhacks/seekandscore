@@ -1,5 +1,6 @@
 import type { PropsWithChildren, ReactNode } from "react";
 
+import type { TopQueueSnapshot } from "@seekandscore/contracts";
 import { Badge } from "@seekandscore/ui";
 
 import {
@@ -15,16 +16,15 @@ interface NavItem {
   label: string;
   href: string;
   icon: ReactNode;
-  count?: string;
   active?: boolean;
   locked?: boolean;
 }
 
 const navItems: NavItem[] = [
   { label: "Overview", href: "#overview", icon: <GridIcon />, active: true },
-  { label: "Research queue", href: "#candidate-queue", icon: <QueueIcon />, count: "12" },
+  { label: "Research queue", href: "#candidate-queue", icon: <QueueIcon /> },
   { label: "Map", href: "#candidate-queue", icon: <MapIcon /> },
-  { label: "Deals", href: "#candidate-queue", icon: <DealIcon />, count: "4" },
+  { label: "Deals", href: "#candidate-queue", icon: <DealIcon /> },
   { label: "Outreach", href: "#outreach-panel", icon: <LockIcon />, locked: true },
   { label: "Source health", href: "#source-health", icon: <PulseIcon /> },
 ];
@@ -39,7 +39,18 @@ function BrandMark() {
   );
 }
 
-export function AppShell({ children }: PropsWithChildren) {
+export function AppShell({
+  children,
+  snapshot,
+}: PropsWithChildren<{ snapshot: TopQueueSnapshot }>) {
+  const rightsDisabled = snapshot.provenance.status === "rights_disabled";
+  const hasLiveCandidates = snapshot.candidates.length > 0;
+  const liveStatusLabel = rightsDisabled
+    ? "Display rights disabled"
+    : hasLiveCandidates
+      ? "Verified live data"
+      : "No verified live data";
+
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">
@@ -58,7 +69,13 @@ export function AppShell({ children }: PropsWithChildren) {
         <div className="sidebar-region" aria-label="Active region">
           <span className="sidebar-region__eyebrow">Active region</span>
           <strong>Central Texas</strong>
-          <span>3 counties · shadow mode</span>
+          <span>
+            {rightsDisabled
+              ? "Private source · display disabled"
+              : hasLiveCandidates
+                ? `${snapshot.candidates.length} publishable live record${snapshot.candidates.length === 1 ? "" : "s"}`
+                : "Live candidate feed unavailable"}
+          </span>
         </div>
 
         <nav aria-label="Primary navigation" className="sidebar-nav">
@@ -73,7 +90,6 @@ export function AppShell({ children }: PropsWithChildren) {
                 >
                   <span className="sidebar-nav__icon">{item.icon}</span>
                   <span>{item.label}</span>
-                  {item.count ? <span className="sidebar-nav__count">{item.count}</span> : null}
                   {item.locked ? <LockIcon className="sidebar-nav__lock" height="14" width="14" /> : null}
                 </a>
               </li>
@@ -83,11 +99,23 @@ export function AppShell({ children }: PropsWithChildren) {
 
         <div className="sidebar-footer">
           <div className="sidebar-footer__row">
-            <span className="status-indicator" />
-            <span>Workspace healthy</span>
+            <span
+              className={`status-indicator${hasLiveCandidates ? "" : " status-indicator--inactive"}`}
+            />
+            <span>{liveStatusLabel}</span>
           </div>
-          <Badge tone="outline">Synthetic preview</Badge>
-          <p>No production data or outreach is active.</p>
+          <Badge tone={hasLiveCandidates ? "accent" : "blocked"}>
+            {rightsDisabled
+              ? "Display disabled"
+              : hasLiveCandidates
+                ? "Live screening"
+                : "Live unavailable"}
+          </Badge>
+          <p>
+            {hasLiveCandidates
+              ? "Verified parcel screening only. Outbound outreach remains disabled."
+              : "No property records are being displayed. Outbound outreach remains disabled."}
+          </p>
         </div>
       </aside>
 

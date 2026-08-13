@@ -1,7 +1,10 @@
 """Internal assessor-screen projection built from latest source observations."""
 
 import base64
+from datetime import datetime
 from uuid import UUID, uuid5
+
+import sqlalchemy as sa
 
 from seekandscore.acquisition.models import (
     FreshnessStatus,
@@ -26,10 +29,44 @@ from seekandscore.registry import InMemorySourceRegistry
 from seekandscore.version import READ_MODEL_VERSION
 
 LIVE_CANDIDATE_NAMESPACE = UUID("97a9e56d-a6a3-444c-91e7-25558cc63f19")
+LIVE_SOURCE_ID = "travis_tcad_parcels"
+
+
+class CandidateReadUnavailableError(RuntimeError):
+    """The live candidate projection cannot currently serve a request."""
+
+
+class UnavailableCandidateRepository:
+    """Fail-closed projection used when no live observation store is configured."""
+
+    serving_mode = "unavailable"
+    display_enabled = False
+
+    def __init__(self, sources: InMemorySourceRegistry, *, reason: str) -> None:
+        self.sources = sources
+        self.reason = reason
+
+    def list(self, *, limit: int, cursor: str | None, dataset_mode: str) -> CandidatePage:
+        del limit, cursor
+        return _empty_page(
+            sources=self.sources,
+            dataset_mode=dataset_mode,
+            source_status="unavailable",
+            warning=self.reason,
+        )
+
+    def get(self, candidate_id: UUID) -> CandidateReadModel | None:
+        del candidate_id
+        raise CandidateReadUnavailableError(self.reason)
+
+    def is_ready(self) -> bool:
+        return False
 
 
 class LiveCandidateRepository:
     """Reads durable observations; it does not perform acquisition or inference."""
+
+    serving_mode = "live"
 
     def __init__(
         self,
@@ -40,28 +77,62 @@ class LiveCandidateRepository:
     ) -> None:
         self.acquisition = acquisition
         self.sources = sources
-        self.display_enabled = display_enabled
+        source = sources.get(LIVE_SOURCE_ID)
+        self.display_enabled = bool(
+            display_enabled and source is not None and source.display_allowed
+        )
 
     def list(self, *, limit: int, cursor: str | None, dataset_mode: str) -> CandidatePage:
         if dataset_mode != "live":
             raise ValueError("live repository requires DATASET_MODE=live")
         if not self.display_enabled:
             return _empty_page(
-                status="fallback",
-                warning=(
-                    "Live observations are for internal rights review; public display is disabled."
-                ),
+                sources=self.sources,
+                dataset_mode=dataset_mode,
+                source_status="unavailable",
+                warning="Public live display is disabled by runtime approval gates.",
+            )
+        if not self.acquisition.is_ready():
+            return _empty_page(
+                sources=self.sources,
+                dataset_mode=dataset_mode,
+                source_status="unavailable",
+                warning="The live candidate store is unavailable.",
             )
         offset = _decode_live_cursor(cursor) if cursor else 0
-        observations = self.acquisition.list_latest_observations(limit=limit + 1, offset=offset)
-        last_run = self.acquisition.latest_run("travis_tcad_parcels")
-        latest_artifact = self.acquisition.latest_artifact("travis_tcad_parcels")
+        try:
+            observations = self.acquisition.list_latest_observations(limit=limit + 1, offset=offset)
+            total = self.acquisition.count_latest_observations()
+            last_run = self.acquisition.latest_run(LIVE_SOURCE_ID)
+            latest_artifact = self.acquisition.latest_artifact(LIVE_SOURCE_ID)
+        except sa.exc.SQLAlchemyError:
+            return _empty_page(
+                sources=self.sources,
+                dataset_mode=dataset_mode,
+                source_status="error",
+                warning="The live candidate store could not complete the request.",
+            )
         if last_run is None or latest_artifact is None or not observations:
             return _empty_page(
-                status="fallback",
+                sources=self.sources,
+                dataset_mode=dataset_mode,
+                source_status="unknown",
                 warning="No successful live candidate projection is available.",
             )
-        freshness = self.sources.freshness("travis_tcad_parcels", last_run)
+        if last_run.status not in {
+            SourceRunStatus.SUCCEEDED,
+            SourceRunStatus.SUCCEEDED_UNCHANGED,
+            SourceRunStatus.PARTIAL,
+        }:
+            return _empty_page(
+                sources=self.sources,
+                dataset_mode=dataset_mode,
+                source_status="error" if last_run.status is SourceRunStatus.FAILED else "unknown",
+                warning="The latest live acquisition is not a successful candidate snapshot.",
+                retrieved_at=latest_artifact.retrieved_at,
+                record_count=last_run.records_fetched,
+            )
+        freshness = self.sources.freshness(LIVE_SOURCE_ID, last_run)
         partial = last_run.partial or last_run.status is SourceRunStatus.PARTIAL
         status = (
             "partial"
@@ -76,12 +147,12 @@ class LiveCandidateRepository:
             _project_candidate(observation, rank=offset + index + 1)
             for index, observation in enumerate(visible)
         )
-        source = self.sources.get("travis_tcad_parcels")
+        source = self.sources.get(LIVE_SOURCE_ID)
         assert source is not None
         return CandidatePage(
             items=items,
             next_cursor=_encode_live_cursor(offset + limit) if has_more else None,
-            total=max(offset + len(items), last_run.observations_created),
+            total=total,
             dataset_mode="live",
             dataset_status=status,
             retrieved_at=latest_artifact.retrieved_at,
@@ -107,9 +178,27 @@ class LiveCandidateRepository:
 
     def get(self, candidate_id: UUID) -> CandidateReadModel | None:
         if not self.display_enabled:
-            return None
+            raise CandidateReadUnavailableError("Live candidate display is disabled.")
+        if not self.acquisition.is_ready():
+            raise CandidateReadUnavailableError("The live candidate store is unavailable.")
         # Detail lookups remain bounded for this screening slice.
-        observations = self.acquisition.list_latest_observations(limit=10_000)
+        try:
+            last_run = self.acquisition.latest_run(LIVE_SOURCE_ID)
+            if last_run is None or last_run.status not in {
+                SourceRunStatus.SUCCEEDED,
+                SourceRunStatus.SUCCEEDED_UNCHANGED,
+                SourceRunStatus.PARTIAL,
+            }:
+                raise CandidateReadUnavailableError(
+                    "No successful live candidate projection is available."
+                )
+            observations = self.acquisition.list_latest_observations(limit=10_000)
+        except CandidateReadUnavailableError:
+            raise
+        except sa.exc.SQLAlchemyError as error:
+            raise CandidateReadUnavailableError(
+                "The live candidate store could not complete the request."
+            ) from error
         for rank, observation in enumerate(observations, start=1):
             candidate = _project_candidate(observation, rank=rank)
             if candidate.id == candidate_id:
@@ -117,7 +206,7 @@ class LiveCandidateRepository:
         return None
 
     def is_ready(self) -> bool:
-        return True
+        return self.acquisition.is_ready()
 
 
 def _project_candidate(
@@ -183,7 +272,6 @@ def _project_candidate(
             freshness="current",
         ),
         as_of=observation.observed_at,
-        synthetic=False,
         screening_only=True,
         source_observation=SourceObservation(
             source_id=observation.source_id,
@@ -202,13 +290,38 @@ def _project_candidate(
     )
 
 
-def _empty_page(*, status: str, warning: str) -> CandidatePage:
+def _empty_page(
+    *,
+    sources: InMemorySourceRegistry,
+    dataset_mode: str,
+    source_status: str,
+    warning: str,
+    retrieved_at: datetime | None = None,
+    record_count: int | None = None,
+) -> CandidatePage:
+    source = sources.get(LIVE_SOURCE_ID)
+    source_summaries = (
+        (
+            CandidateSourceSummary(
+                id=source.id,
+                name=source.name,
+                status=source_status,
+                retrieved_at=retrieved_at,
+                record_count=record_count,
+                detail=source.use_limitation,
+            ),
+        )
+        if source is not None
+        else ()
+    )
     return CandidatePage(
         items=(),
         next_cursor=None,
         total=0,
-        dataset_mode="live",
-        dataset_status=status,
+        dataset_mode=dataset_mode,
+        dataset_status="error",
+        retrieved_at=retrieved_at,
+        sources=source_summaries,
         warnings=(warning,),
     )
 

@@ -14,8 +14,8 @@ INGESTION_ACTIVATION_ID=<reviewed record id>
 INGESTION_SOURCE_ID=travis_tcad_parcels
 approved source-rights record
 durable raw-artifact storage
-LIVE_SOURCE_DISPLAY_ENABLED=false until a separate display-rights approval
-LIVE_SOURCE_DISPLAY_APPROVAL_ID=<separate reviewed id> only when display is enabled
+LIVE_SOURCE_DISPLAY_ENABLED=true only for an approved source descriptor
+LIVE_SOURCE_DISPLAY_APPROVAL_ID=SRC-TCAD-TNR-BOUNDED-DISPLAY-20260813-V1
 ```
 
 The one-shot command is:
@@ -30,11 +30,11 @@ The initial default is deliberately only 250 records. It proves acquisition, art
 
 ## Authoritative source register
 
-### Ready for bounded engineering, still awaiting rights approval
+### Approved for bounded collection and attributed reference display
 
 | Source | Exact official endpoint/download | Publication/access behavior | Rights and rate-limit posture |
 |---|---|---|---|
-| Travis TNR/TCAD parcels | [Layer metadata](https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0), [query operation](https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0/query) | Travis County says the TCAD-derived layer is assembled and updated monthly. ArcGIS reports query/data capability, pagination, and a 1,000-record response maximum. | No endpoint-specific request quota or reuse license is published. Use one request at a time, 250-record pages, at least one second between requests, `Retry-After`, and bounded retries. Keep `rights_review`: TCAD's [maps page](https://traviscad.org/maps) says data mining is prohibited, so applicability to this County-published derivative must be resolved in writing. |
+| Travis TNR/TCAD parcels | [Service ItemInfo](https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/info/iteminfo), [layer metadata](https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0), [query operation](https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0/query) | Travis County says the TCAD-derived layer is assembled and updated monthly. ArcGIS reports query/data capability, pagination, and a 1,000-record response maximum. | Exact ItemInfo identifies TCAD and limits the product to informational/reference use with approximate boundaries and no accuracy/completeness warranty. The approved product scope is bounded collection, private raw retention, and attributed display of the non-owner allowlist. Export, redistribution, contact use, legal-boundary conclusions, appraisal, and offers are disabled. TCAD's separate [PDF maps page](https://traviscad.org/maps) is not accessed or mined. |
 
 ### Identified official sources; adapters remain disabled
 
@@ -113,13 +113,13 @@ Do not install a local recurring job until the three-run idempotency test and ki
 2. Use the pinned `postgis/postgis:17-3.5` single-node service with one persistent volume mounted at `/var/lib/postgresql/data`. Set `PGDATA=/var/lib/postgresql/data/pgdata`; writing directly to the mounted root fails because Railway initializes it with `lost+found`. Keep it private, configure Railway volume backups, create an external logical backup, and accept the single-node limitation.
 3. Deploy API from `/infra/railway/api.example.toml` and web from `/infra/railway/web.example.toml`. API is the only migration owner. Reference the private database as `DATABASE_URL=${{PostGIS.DATABASE_URL}}`; never add a public database TCP proxy for application traffic.
 4. Deploy the manual acquisition proof from `/infra/railway/ingestion-travis.example.toml`. Give it PostGIS and `raw-artifacts` references, but no public domain, Redis, outreach, alert-provider, auth, or web secrets. This template intentionally has no cron.
-5. First deploy it with `APP_ENV=staging`, `DATASET_MODE=synthetic`, `INGESTION_ENABLED=false`, `INGESTION_SOURCE_ID=travis_tcad_parcels`, page/max records `250`, and no activation ID. Confirm the command fails closed without a network acquisition.
+5. First deploy it with `APP_ENV=staging`, `DATASET_MODE=live`, `INGESTION_ENABLED=false`, `INGESTION_SOURCE_ID=travis_tcad_parcels`, page/max records `250`, and no activation ID. Confirm the command fails closed without a network acquisition.
 6. Run database migration from the API pre-deploy owner and verify API `/readyz` before any source run.
-7. Create the rights/activation record, then set `DATASET_MODE=live`, `INGESTION_ENABLED=true`, and the activation ID only on the acquisition service. First execute the default 250-record proof manually.
+7. Reference the recorded rights/activation decision, then set `INGESTION_ENABLED=true` and the activation ID only on the acquisition service. First execute the default 250-record proof manually.
 8. After that proof passes, set `INGESTION_CITIES=DEL VALLE,MANOR` and `INGESTION_MAX_RECORDS=1000`; verify the preflight count is at most 1,000, then run the complete 953-record airport/east-growth cohort.
 9. Verify raw object durability/checksum, source-run row counts, exactly bounded request count, parser outcome, and a duplicate run. Exercise the kill switch and inspect logs for secret/query leakage.
 10. Only after both runs pass, change the service config path to `/infra/railway/ingestion-travis.cron.example.toml`, which enables `17 9 2 * *`. Railway cron is UTC, may start late, and skips a new run while the previous process remains active; the process must exit and close connections.
-11. Keep `LIVE_SOURCE_DISPLAY_ENABLED=false`, `OUTREACH_MODE=disabled`, `OUTREACH_SEND_ENABLED=false`, and provider alert delivery off throughout ingestion validation. Enabling acquisition never grants public display or export.
+11. Keep public display off during ingestion validation. After the complete cohort and replay checks pass, enable display with `LIVE_SOURCE_DISPLAY_APPROVAL_ID=SRC-TCAD-TNR-BOUNDED-DISPLAY-20260813-V1`. Keep export, redistribution, outreach, and provider alert delivery off. Enabling acquisition alone never grants those capabilities.
 
 ## Incident stop and replay
 

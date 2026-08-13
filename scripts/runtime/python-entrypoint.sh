@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-: "${DATASET_MODE:=synthetic}"
+: "${DATASET_MODE:=live}"
 : "${INGESTION_ENABLED:=false}"
 : "${LIVE_SOURCE_DISPLAY_ENABLED:=false}"
 : "${ALERT_DELIVERY_MODE:=log}"

@@ -46,7 +46,7 @@ class SourceDescriptor(BaseModel):
     adapter_version: str
     parser_version: str
     contains_personal_data: bool = False
-    display_allowed: bool = True
+    display_allowed: bool = False
     export_allowed: bool = False
     redistribution_allowed: bool = False
 

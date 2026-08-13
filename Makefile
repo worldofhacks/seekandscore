@@ -45,7 +45,7 @@ app-up: ## Build and start the full local stack with safe defaults.
 	docker compose --profile app up --build
 
 ingestion-check: ## Check ingestion gates without acquiring source data.
-	APP_ENV=development DATASET_MODE=synthetic INGESTION_ENABLED=false uv run python -m seekandscore.ingestion check
+	APP_ENV=development DATASET_MODE=live INGESTION_ENABLED=false uv run python -m seekandscore.ingestion check
 
 ingestion-run-local: ## Run the bounded local job; required live gates come only from the caller.
 	docker compose --profile ingestion run --rm -e APP_ENV -e DATASET_MODE -e INGESTION_ENABLED -e INGESTION_ACTIVATION_ID ingestion-travis

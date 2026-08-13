@@ -1,132 +1,95 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApiCandidatePage } from "@seekandscore/contracts";
 
-import { mapApiCandidatePage } from "./api";
+import { loadTopQueueSnapshot, mapApiCandidatePage } from "./api";
 
-const page: ApiCandidatePage = {
+const livePage: ApiCandidatePage = {
   items: [
     {
       id: "11111111-1111-4111-8111-111111111111",
-      display_name: "Synthetic API parcel",
+      display_name: "East Austin assessor parcel",
       locality: "Austin, TX",
-      parcel_id: "TX-453-SYN-API-001",
+      parcel_id: "TCAD-700001",
       candidate_kind: "parcel",
       parcel_count: 1,
-      jurisdiction_id: "us-tx-453",
+      jurisdiction_id: "us-tx-travis",
       county_name: "Travis County",
       state_name: "Texas",
       timezone: "America/Chicago",
-      strategy: "infill",
+      strategy: "assessor",
       rank: 1,
-      previous_rank: 3,
-      queue_state: "ready",
-      opportunity_score: 87.4,
-      confidence: 0.82,
+      previous_rank: null,
+      queue_state: "research",
+      opportunity_score: 67.4,
+      confidence: 0.72,
       acreage: 2.4,
-      value_range: { low: 980000, high: 1260000 },
-      likely_basis: 795000,
-      thesis: "Synthetic contract test.",
-      opportunity_zone_status: "effective",
-      next_action: "Verify access.",
-      material_change: "Evidence refreshed.",
-      evidence: { source_count: 5, unresolved_conflict_count: 0, freshness: "current" },
-      as_of: "2026-08-12T12:00:00Z",
-      synthetic: true,
-      read_model_version: "synthetic-candidate-v1",
+      value_range: { low: 1_250_000, high: 1_250_000 },
+      likely_basis: 0,
+      thesis: "Deterministic assessor screening for research only.",
+      opportunity_zone_status: "review",
+      next_action: "Verify parcel geometry and Opportunity Zone overlay.",
+      material_change: null,
+      evidence: { source_count: 1, unresolved_conflict_count: 0, freshness: "current" },
+      as_of: "2026-08-13T10:30:00Z",
+      read_model_version: "live-candidate-v1",
+      screening_only: true,
+      source_observation: {
+        source_id: "travis_tcad_parcels",
+        source_record_id: "OBJECTID-42",
+        artifact_sha256: "a".repeat(64),
+        retrieved_at: "2026-08-13T10:30:00Z",
+        fields: {
+          appraised_value_cents: 125_000_000,
+          land_value_cents: 90_000_000,
+          acreage: 2.4,
+        },
+      },
     },
   ],
   next_cursor: null,
   total: 1,
-  dataset_mode: "synthetic",
-  read_model_version: "synthetic-candidate-v1",
+  dataset_mode: "live",
+  dataset_status: "current",
+  read_model_version: "live-candidate-v1",
+  retrieved_at: "2026-08-13T10:30:00Z",
+  published_at: null,
+  stale_after: "2026-09-27T10:30:00Z",
+  partial: false,
+  warnings: ["Opportunity Zone overlay is not yet verified."],
+  sources: [
+    {
+      id: "travis_tcad_parcels",
+      name: "Travis County TNR / TCAD parcel layer",
+      status: "current",
+      retrieved_at: "2026-08-13T10:30:00Z",
+      record_count: 1,
+    },
+  ],
 };
 
-describe("API candidate adapter", () => {
-  it("maps the FastAPI wire model into the operator contract and keeps outreach blocked", () => {
-    const snapshot = mapApiCandidatePage(page);
-    expect(snapshot.timeZone).toBe("America/Chicago");
-    expect(snapshot.provenance).toMatchObject({
-      mode: "synthetic",
-      status: "synthetic",
-      isFallback: false,
-      retrievedAt: null,
-    });
-    expect(snapshot.asOf).toBe("2026-08-12T12:00:00Z");
-    expect(snapshot.candidates).toHaveLength(1);
-    expect(snapshot.candidates[0]).toMatchObject({
-      name: "Synthetic API parcel",
-      strategy: "Buildable land",
-      overallScore: 87.4,
-      outreachGate: { status: "blocked" },
-    });
-    expect(snapshot.candidates[0].evidence).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          label: "Fixture evidence status",
-          source: "5 synthetic fixture observations",
-        }),
-      ]),
-    );
-  });
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
-  it("maps live assessor provenance without presenting source values as acquisition basis", () => {
-    const livePage: ApiCandidatePage = {
-      ...page,
-      dataset_mode: "live",
-      dataset_status: "current",
-      retrieved_at: "2026-08-13T10:30:00Z",
-      published_at: "2026-08-01T05:00:00Z",
-      stale_after: "2026-09-15T05:00:00Z",
-      partial: false,
-      warnings: ["Opportunity Zone overlay is not yet verified."],
-      sources: [
-        {
-          id: "travis-tcad-arcgis",
-          name: "Travis County TNR/TCAD parcel layer",
-          status: "current",
-          retrieved_at: "2026-08-13T10:30:00Z",
-          published_at: "2026-08-01T05:00:00Z",
-          record_count: 1,
-        },
-      ],
-      items: [
-        {
-          ...page.items[0],
-          synthetic: false,
-          strategy: "assessor",
-          screening_only: true,
-          opportunity_zone_status: "review",
-          source_observation: {
-            source_id: "travis-tcad-arcgis",
-            source_record_id: "OBJECTID-42",
-            artifact_sha256: "a".repeat(64),
-            retrieved_at: "2026-08-13T10:30:00Z",
-            fields: {
-              appraised_value_cents: 125_000_000,
-              land_value_cents: 90_000_000,
-              acreage: 2.4,
-            },
-          },
-        },
-      ],
-    };
-
+describe("strict live candidate adapter", () => {
+  it("maps verified live assessor records and keeps outreach blocked", () => {
     const snapshot = mapApiCandidatePage(livePage);
 
-    expect(snapshot.isSynthetic).toBe(false);
     expect(snapshot.provenance).toMatchObject({
       mode: "live",
       status: "current",
       retrievedAt: "2026-08-13T10:30:00Z",
-      publishedAt: "2026-08-01T05:00:00Z",
-      sources: [{ id: "travis-tcad-arcgis", status: "current" }],
+      statusDetail: "Opportunity Zone overlay is not yet verified.",
     });
+    expect(snapshot.candidates).toHaveLength(1);
     expect(snapshot.candidates[0]).toMatchObject({
+      name: "East Austin assessor parcel",
       strategy: "Parcel screening",
       screeningOnly: true,
       sourceObservation: {
-        sourceId: "travis-tcad-arcgis",
+        sourceId: "travis_tcad_parcels",
         fields: { appraisedValueCents: 125_000_000 },
       },
       outreachGate: {
@@ -146,57 +109,112 @@ describe("API candidate adapter", () => {
     );
   });
 
-  it("accepts legacy flat source observations and labels live-mode fallback as synthetic", () => {
+  it("rejects a non-live dataset without mapping any candidate", () => {
     const snapshot = mapApiCandidatePage({
-      ...page,
-      dataset_mode: "live",
-      dataset_status: "fallback",
-      warnings: ["Live projection is unavailable; synthetic records were served."],
+      ...livePage,
+      dataset_mode: "test-provider",
+      dataset_status: "current",
       items: [
         {
-          ...page.items[0],
-          screening_only: true,
-          source_observation: {
-            source_id: "travis-tcad-arcgis",
-            source_record_id: "OBJECTID-84",
-            artifact_sha256: "b".repeat(64),
-            retrieved_at: "2026-08-13T11:00:00Z",
-            assessed_value_cents: 98_000_000,
-          },
+          ...livePage.items[0],
+          display_name: "Fictional candidate that must never render",
+          source_observation: undefined,
         },
       ],
     });
 
+    expect(snapshot.candidates).toEqual([]);
     expect(snapshot.provenance).toMatchObject({
-      mode: "synthetic",
-      status: "fallback",
-      isFallback: true,
-      fallbackReason: "Live projection is unavailable; synthetic records were served.",
+      mode: "unknown",
+      status: "unavailable",
     });
-    expect(snapshot.candidates[0].sourceObservation?.fields.assessedValueCents).toBe(
-      98_000_000,
-    );
+    expect(JSON.stringify(snapshot)).not.toContain("Fictional candidate that must never render");
   });
 
-  it("preserves absent timestamps instead of inventing epoch or retrieval dates", () => {
+  it("rejects records when a live response has an unsupported dataset status", () => {
     const snapshot = mapApiCandidatePage({
-      ...page,
+      ...livePage,
+      dataset_status: "fallback",
+      warnings: ["A substitute dataset was offered."],
+      items: [
+        {
+          ...livePage.items[0],
+          display_name: "Substituted record that must never render",
+        },
+      ],
+    });
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.provenance.status).toBe("unavailable");
+    expect(JSON.stringify(snapshot)).not.toContain("Substituted record that must never render");
+    expect(JSON.stringify(snapshot)).not.toContain("A substitute dataset was offered.");
+  });
+
+  it("represents a private live shadow run as display-disabled with zero candidates", () => {
+    const reason = "Live observations are for internal rights review; public display is disabled.";
+    const snapshot = mapApiCandidatePage({
+      ...livePage,
+      items: [],
+      total: 0,
+      dataset_status: "fallback",
+      retrieved_at: null,
+      published_at: null,
+      stale_after: null,
+      sources: [],
+      warnings: [reason],
+    });
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.provenance).toMatchObject({
+      mode: "live",
+      status: "rights_disabled",
+      statusDetail: reason,
+      retrievedAt: null,
+    });
+  });
+
+  it("returns an empty error snapshot when the live API is not configured", async () => {
+    vi.stubEnv("API_BASE_URL", "");
+
+    const snapshot = await loadTopQueueSnapshot();
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.provenance.status).toBe("error");
+    expect(snapshot.provenance.statusDetail).toContain("not configured");
+    expect(snapshot.asOf).toBeNull();
+  });
+
+  it("preserves a rights-disabled live page returned with HTTP 503", async () => {
+    const reason = "Live observations are for internal rights review; public display is disabled.";
+    const unavailablePage: ApiCandidatePage = {
+      ...livePage,
       items: [],
       total: 0,
       dataset_status: "error",
       retrieved_at: null,
-      sources: [
-        {
-          id: "private-shadow-source",
-          name: "Private shadow source",
-          status: "unavailable",
-          retrieved_at: null,
-        },
-      ],
-    });
+      published_at: null,
+      stale_after: null,
+      sources: [],
+      warnings: [reason],
+    };
+    vi.stubEnv("API_BASE_URL", "https://api.example.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(unavailablePage), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
 
-    expect(snapshot.asOf).toBeNull();
-    expect(snapshot.provenance.retrievedAt).toBeNull();
-    expect(snapshot.provenance.sources[0].retrievedAt).toBeNull();
+    const snapshot = await loadTopQueueSnapshot();
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.provenance).toMatchObject({
+      mode: "live",
+      status: "rights_disabled",
+      statusDetail: reason,
+    });
   });
 });

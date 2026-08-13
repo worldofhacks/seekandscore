@@ -31,6 +31,7 @@ def require_safe_runtime_defaults() -> list[str]:
     failures: list[str] = []
     entrypoint = (ROOT / "scripts/runtime/python-entrypoint.sh").read_text(encoding="utf-8")
     expected = {
+        "DATASET_MODE": "live",
         "INGESTION_ENABLED": "false",
         "LIVE_SOURCE_DISPLAY_ENABLED": "false",
         "OUTREACH_MODE": "disabled",
@@ -39,6 +40,29 @@ def require_safe_runtime_defaults() -> list[str]:
     for name, value in expected.items():
         if f"${{{name}:={value}}}" not in entrypoint:
             failures.append(f"python entrypoint must default {name}={value}")
+
+    web_entrypoint = (ROOT / "scripts/runtime/web-entrypoint.sh").read_text(encoding="utf-8")
+    if '${DATASET_MODE:=live}' not in web_entrypoint:
+        failures.append("web entrypoint must default DATASET_MODE=live")
+    if 'if [ "$DATASET_MODE" != "live" ]' not in web_entrypoint:
+        failures.append("web entrypoint must reject non-live dataset modes")
+    if 'API_BASE_URL is required in $APP_ENV' not in web_entrypoint:
+        failures.append("web staging/production runtime must require API_BASE_URL")
+
+    web_dockerfile = (ROOT / "infra/docker/web.Dockerfile").read_text(encoding="utf-8")
+    if "APP_ENV=production" not in web_dockerfile:
+        failures.append("web production image must set APP_ENV=production")
+    if "DATASET_MODE=live" not in web_dockerfile:
+        failures.append("web production image must set DATASET_MODE=live")
+
+    for image_name in ("api", "worker"):
+        dockerfile = (ROOT / f"infra/docker/{image_name}.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        if "APP_ENV=production" not in dockerfile:
+            failures.append(f"{image_name} production image must set APP_ENV=production")
+        if "DATASET_MODE=live" not in dockerfile:
+            failures.append(f"{image_name} production image must set DATASET_MODE=live")
 
     compose = parse_yaml(ROOT / "compose.yaml")
     runtime = compose.get("x-safe-runtime", {}) if isinstance(compose, dict) else {}
@@ -65,6 +89,38 @@ def require_safe_railway_commands() -> list[str]:
             failures.append(
                 f"{path.relative_to(ROOT)}: Python startCommand must invoke {safe_entrypoint}"
             )
+    return failures
+
+
+def require_live_only_runtime_tree() -> list[str]:
+    """Prevent candidate fixtures or substitute modes from returning to runtime code."""
+
+    failures: list[str] = []
+    runtime_roots = (
+        ROOT / "python/seekandscore",
+        ROOT / "apps/web",
+        ROOT / "packages/contracts/typescript",
+    )
+    forbidden = {
+        "SyntheticCandidateRepository": "fixture-backed candidate repository",
+        'dataset_status="fallback"': "fallback candidate status",
+        'dataset_status="synthetic"': "non-live candidate status",
+        'DatasetMode.SYNTHETIC': "non-live dataset mode",
+        "synthetic-candidate-v1": "fixture read-model version",
+    }
+    suffixes = {".py", ".ts", ".tsx"}
+    for root in runtime_roots:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix not in suffixes or ".next" in path.parts:
+                continue
+            if ".test." in path.name:
+                continue
+            content = path.read_text(encoding="utf-8")
+            for marker, label in forbidden.items():
+                if marker in content:
+                    failures.append(f"{path.relative_to(ROOT)}: contains forbidden {label}")
+    if (ROOT / "apps/web/lib/candidates.ts").exists():
+        failures.append("apps/web/lib/candidates.ts: deployed candidate fixture module must not exist")
     return failures
 
 
@@ -132,6 +188,7 @@ def main() -> int:
     try:
         failures.extend(require_safe_runtime_defaults())
         failures.extend(require_safe_railway_commands())
+        failures.extend(require_live_only_runtime_tree())
         failures.extend(require_safe_ingestion_profiles())
     except Exception as exc:
         failures.append(f"deployment safety validation failed: {exc}")

@@ -11,7 +11,7 @@ from seekandscore.worker.runtime import QueueName, WorkerRuntime, parse_queues
 
 
 def test_api_configuration_check() -> None:
-    assert api_main(["--check"]) == 0
+    assert api_main(["--check"]) == 1
 
 
 def test_queue_parser_rejects_unknown_and_duplicate_names() -> None:

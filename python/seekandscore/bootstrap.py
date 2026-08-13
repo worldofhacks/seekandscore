@@ -17,10 +17,11 @@ from seekandscore.identity.module import DESCRIPTOR as IDENTITY_DESCRIPTOR
 from seekandscore.kernel import ModuleDescriptor
 from seekandscore.platform.module import DESCRIPTOR as PLATFORM_DESCRIPTOR
 from seekandscore.platform.settings import Settings
-from seekandscore.readmodels import LiveCandidateRepository, SyntheticCandidateRepository
+from seekandscore.readmodels import LiveCandidateRepository, UnavailableCandidateRepository
 from seekandscore.readmodels.candidates import CandidatePage, CandidateReadModel
 from seekandscore.registry import InMemoryGeographyRegistry, InMemorySourceRegistry
 from seekandscore.registry.module import DESCRIPTOR as REGISTRY_DESCRIPTOR
+from seekandscore.registry.sources import TRAVIS_TCAD_DISPLAY_APPROVAL_ID
 
 MODULES: tuple[ModuleDescriptor, ...] = (
     PLATFORM_DESCRIPTOR,
@@ -32,6 +33,9 @@ MODULES: tuple[ModuleDescriptor, ...] = (
 
 
 class CandidateRepository(Protocol):
+    serving_mode: str
+    display_enabled: bool
+
     def list(self, *, limit: int, cursor: str | None, dataset_mode: str) -> CandidatePage: ...
 
     def get(self, candidate_id: UUID) -> CandidateReadModel | None: ...
@@ -66,12 +70,18 @@ class AppContainer:
                 sources,
                 display_enabled=bool(
                     settings.live_source_display_enabled
+                    and settings.live_source_display_approval_id == TRAVIS_TCAD_DISPLAY_APPROVAL_ID
                     and live_source is not None
                     and live_source.display_allowed
                 ),
             )
         else:
-            candidates = SyntheticCandidateRepository(geography)
+            reason = (
+                "Candidate serving requires DATASET_MODE=live."
+                if settings.dataset_mode != "live"
+                else "The live candidate store is not configured."
+            )
+            candidates = UnavailableCandidateRepository(sources, reason=reason)
         return cls(
             settings=settings,
             geography=geography,

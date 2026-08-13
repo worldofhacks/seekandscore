@@ -20,6 +20,8 @@ RUN uv sync --frozen --no-dev
 
 FROM python:3.13.7-slim-bookworm AS runtime
 ENV PATH=/app/.venv/bin:$PATH \
+    APP_ENV=production \
+    DATASET_MODE=live \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000

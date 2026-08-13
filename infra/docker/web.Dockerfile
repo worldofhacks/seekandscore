@@ -19,6 +19,8 @@ RUN mkdir -p apps/web/public && pnpm --filter @seekandscore/web build
 
 FROM node:22.14.0-bookworm-slim AS runtime
 ENV NODE_ENV=production \
+    APP_ENV=production \
+    DATASET_MODE=live \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     HOSTNAME=0.0.0.0

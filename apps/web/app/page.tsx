@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const snapshot = await loadTopQueueSnapshot();
   return (
-    <AppShell>
+    <AppShell snapshot={snapshot}>
       <OperatorConsole snapshot={snapshot} />
     </AppShell>
   );

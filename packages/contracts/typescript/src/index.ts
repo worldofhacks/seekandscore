@@ -22,15 +22,15 @@ export type RiskSeverity = "critical" | "elevated" | "watch";
 
 export type OutreachGateStatus = "blocked" | "needs_review" | "ready";
 
-export type DatasetMode = "live" | "synthetic" | "mixed" | "unknown";
+export type DatasetMode = "live" | "unknown";
 
 export type DatasetHealthStatus =
-  | "synthetic"
   | "current"
   | "stale"
   | "partial"
   | "error"
-  | "fallback"
+  | "rights_disabled"
+  | "unavailable"
   | "unknown";
 
 export type DataSourceStatus = "current" | "stale" | "error" | "unavailable" | "unknown";
@@ -123,8 +123,7 @@ export interface DatasetProvenance {
   retrievedAt: string | null;
   publishedAt: string | null;
   staleAfter: string | null;
-  isFallback: boolean;
-  fallbackReason: string | null;
+  statusDetail: string | null;
   sources: DataSourceProvenance[];
   warnings: string[];
 }
@@ -136,12 +135,11 @@ export interface TopQueueSnapshot {
   timeZone: string;
   asOf: string | null;
   modelVersion: string;
-  isSynthetic: boolean;
   provenance: DatasetProvenance;
   candidates: CandidateSummary[];
 }
 
-/** Wire contract returned by the current FastAPI synthetic read model. */
+/** Wire contract returned by the FastAPI candidate read model. */
 export interface ApiEvidenceSummary {
   source_count: number;
   unresolved_conflict_count: number;
@@ -174,7 +172,6 @@ export interface ApiCandidateReadModel {
   material_change: string | null;
   evidence: ApiEvidenceSummary;
   as_of: string;
-  synthetic: boolean;
   read_model_version: string;
   screening_only?: boolean;
   source_observation?: {
@@ -214,7 +211,7 @@ export interface ApiCandidatePage {
   total: number;
   dataset_mode: string;
   read_model_version: string;
-  dataset_status?: DatasetHealthStatus;
+  dataset_status?: string;
   retrieved_at?: string | null;
   published_at?: string | null;
   stale_after?: string | null;

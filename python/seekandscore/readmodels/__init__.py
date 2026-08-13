@@ -3,13 +3,17 @@
 from seekandscore.readmodels.candidates import (
     CandidatePage,
     CandidateReadModel,
-    SyntheticCandidateRepository,
 )
-from seekandscore.readmodels.live_candidates import LiveCandidateRepository
+from seekandscore.readmodels.live_candidates import (
+    CandidateReadUnavailableError,
+    LiveCandidateRepository,
+    UnavailableCandidateRepository,
+)
 
 __all__ = [
     "CandidatePage",
     "CandidateReadModel",
+    "CandidateReadUnavailableError",
     "LiveCandidateRepository",
-    "SyntheticCandidateRepository",
+    "UnavailableCandidateRepository",
 ]

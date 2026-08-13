@@ -6,6 +6,11 @@ from functools import lru_cache
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from seekandscore.registry.sources import (
+    TRAVIS_TCAD_ACQUISITION_APPROVAL_ID,
+    TRAVIS_TCAD_DISPLAY_APPROVAL_ID,
+)
+
 
 class AppEnvironment(StrEnum):
     DEVELOPMENT = "development"
@@ -16,7 +21,6 @@ class AppEnvironment(StrEnum):
 
 
 class DatasetMode(StrEnum):
-    SYNTHETIC = "synthetic"
     LIVE = "live"
 
 
@@ -53,7 +57,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     release_sha: str = "development"
 
-    dataset_mode: DatasetMode = DatasetMode.SYNTHETIC
+    dataset_mode: DatasetMode = DatasetMode.LIVE
     ingestion_enabled: bool = False
     ingestion_activation_id: str | None = None
     ingestion_source_id: str = "travis_tcad_parcels"
@@ -96,6 +100,11 @@ class Settings(BaseSettings):
     def validate_effect_activation(self) -> "Settings":
         """Reject ambiguous or unsafe external-effect configurations."""
 
+        if (
+            self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}
+            and self.dataset_mode is not DatasetMode.LIVE
+        ):
+            raise ValueError("staging/production API requires DATASET_MODE=live")
         if self.ingestion_enabled:
             if self.app_env in {
                 AppEnvironment.DEVELOPMENT,
@@ -105,8 +114,8 @@ class Settings(BaseSettings):
                 raise ValueError("ingestion cannot be enabled in development, test, or preview")
             if self.dataset_mode is not DatasetMode.LIVE:
                 raise ValueError("enabled ingestion requires DATASET_MODE=live")
-            if not self.ingestion_activation_id:
-                raise ValueError("enabled ingestion requires INGESTION_ACTIVATION_ID")
+            if self.ingestion_activation_id != TRAVIS_TCAD_ACQUISITION_APPROVAL_ID:
+                raise ValueError("enabled ingestion requires the approved INGESTION_ACTIVATION_ID")
             if self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION} and not all(
                 (
                     self.object_storage_endpoint,
@@ -128,8 +137,13 @@ class Settings(BaseSettings):
         cities = tuple(city.strip().upper() for city in self.ingestion_cities.split(",") if city)
         if len(cities) > 20 or any(not city.replace(" ", "").isalpha() for city in cities):
             raise ValueError("INGESTION_CITIES must contain at most 20 city names")
-        if self.live_source_display_enabled and not self.live_source_display_approval_id:
-            raise ValueError("live source display requires LIVE_SOURCE_DISPLAY_APPROVAL_ID")
+        if (
+            self.live_source_display_enabled
+            and self.live_source_display_approval_id != TRAVIS_TCAD_DISPLAY_APPROVAL_ID
+        ):
+            raise ValueError(
+                "live source display requires the approved LIVE_SOURCE_DISPLAY_APPROVAL_ID"
+            )
 
         if self.alert_delivery_mode is AlertDeliveryMode.PROVIDER:
             if self.app_env is not AppEnvironment.PRODUCTION:
@@ -157,6 +171,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "outreach sends require provider, policy, legal-review, and activation records"
                 )
+
+        if (
+            self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}
+            and not self.database_url
+        ):
+            raise ValueError("staging/production API requires DATABASE_URL")
 
         return self
 

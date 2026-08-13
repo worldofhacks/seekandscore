@@ -4,12 +4,9 @@ import type {
   CandidateStrategy,
   CandidateSummary,
   DatasetHealthStatus,
-  DatasetMode,
   EvidenceDatum,
   TopQueueSnapshot,
 } from "@seekandscore/contracts";
-
-import { topQueueSnapshot } from "./candidates";
 
 const STRATEGIES: Record<string, CandidateStrategy> = {
   assemblage: "Land banking",
@@ -19,16 +16,85 @@ const STRATEGIES: Record<string, CandidateStrategy> = {
   assessor: "Parcel screening",
 };
 
-function datasetMode(value: string): DatasetMode {
-  return value === "live" || value === "synthetic" || value === "mixed"
-    ? value
-    : "unknown";
+function datasetStatus(page: ApiCandidatePage): DatasetHealthStatus {
+  if (page.partial) return "partial";
+  if (
+    page.dataset_status === "current" ||
+    page.dataset_status === "stale" ||
+    page.dataset_status === "partial" ||
+    page.dataset_status === "error"
+  ) {
+    return page.dataset_status;
+  }
+  return "unknown";
 }
 
-function datasetStatus(page: ApiCandidatePage, mode: DatasetMode): DatasetHealthStatus {
-  if (page.dataset_status) return page.dataset_status;
-  if (page.partial) return "partial";
-  return mode === "synthetic" ? "synthetic" : "unknown";
+function rightsDisplayDisabled(page: ApiCandidatePage): boolean {
+  if (page.dataset_mode !== "live") return false;
+  const warningText = (page.warnings ?? []).join(" ").toLocaleLowerCase();
+  return (
+    warningText.includes("display is disabled") ||
+    warningText.includes("display rights") ||
+    warningText.includes("rights review") ||
+    warningText.includes("not approved for display")
+  );
+}
+
+function sourceProvenance(page: ApiCandidatePage) {
+  return (page.sources ?? []).map((source) => ({
+    id: source.id,
+    name: source.name,
+    status: source.status,
+    retrievedAt: source.retrieved_at ?? null,
+    publishedAt: source.published_at ?? null,
+    recordCount: source.record_count ?? null,
+    detail: source.detail,
+  }));
+}
+
+function isCandidatePage(value: unknown): value is ApiCandidatePage {
+  if (!value || typeof value !== "object") return false;
+  const page = value as Partial<ApiCandidatePage>;
+  return (
+    Array.isArray(page.items) &&
+    typeof page.dataset_mode === "string" &&
+    typeof page.read_model_version === "string"
+  );
+}
+
+function emptyLiveSnapshot(
+  reason: string,
+  status: Extract<DatasetHealthStatus, "error" | "rights_disabled" | "unavailable">,
+  page?: ApiCandidatePage,
+  preserveLiveProvenance = false,
+): TopQueueSnapshot {
+  const isLiveResponse = page?.dataset_mode === "live";
+  const livePage = isLiveResponse ? page : undefined;
+  return {
+    id: page ? `api-${page.read_model_version}-empty` : "live-api-unavailable",
+    label: "Verified live candidates",
+    region: "Central Texas",
+    timeZone: "America/Chicago",
+    asOf: preserveLiveProvenance ? (livePage?.retrieved_at ?? null) : null,
+    modelVersion: "Live candidate contract · no publishable dataset",
+    provenance: {
+      mode: isLiveResponse ? "live" : "unknown",
+      status,
+      retrievedAt:
+        preserveLiveProvenance ? (livePage?.retrieved_at ?? null) : null,
+      publishedAt:
+        preserveLiveProvenance ? (livePage?.published_at ?? null) : null,
+      staleAfter:
+        preserveLiveProvenance ? (livePage?.stale_after ?? null) : null,
+      statusDetail: reason,
+      sources: preserveLiveProvenance && livePage ? sourceProvenance(livePage) : [],
+      warnings:
+        preserveLiveProvenance && livePage && status !== "unavailable"
+          ? (livePage.warnings ?? []).filter((warning) => warning !== reason)
+          : [],
+    },
+    candidates: [],
+  };
 }
 
 function sourceObservationFor(candidate: ApiCandidateReadModel) {
@@ -89,37 +155,31 @@ function evidenceFor(candidate: ApiCandidateReadModel): EvidenceDatum[] {
       label: "Parcel identity",
       value: candidate.parcel_id,
       status: conflictStatus,
-      source: candidate.synthetic
-        ? `${candidate.county_name} synthetic registry`
-        : sourceLabel,
+      source: sourceLabel,
       observedAt: candidate.as_of,
-      detail: candidate.synthetic
-        ? "Synthetic API observation used to validate the runtime contract."
-        : "Official source observation; field and legal verification remain required.",
+      detail: "Official source observation; field and legal verification remain required.",
     },
     {
       id: `${candidate.id}-freshness`,
-      label: candidate.synthetic ? "Fixture evidence status" : "Evidence freshness",
+      label: "Evidence freshness",
       value: candidate.evidence.freshness,
       status: candidate.evidence.freshness === "current" ? "verified" : "unknown",
-      source: `${candidate.evidence.source_count} ${candidate.synthetic ? "synthetic fixture" : "source"} observation${candidate.evidence.source_count === 1 ? "" : "s"}`,
+      source: `${candidate.evidence.source_count} source observation${candidate.evidence.source_count === 1 ? "" : "s"}`,
       observedAt: candidate.as_of,
-      detail: candidate.synthetic
-        ? "No production source or personal data is active."
-        : "Freshness is evaluated against the configured source cadence.",
+      detail: "Freshness is evaluated against the configured source cadence.",
     },
   ];
 
   evidence.splice(1, 0, {
     id: `${candidate.id}-value`,
-    label: isLiveScreen ? "Assessor value observation" : "Value range",
-    value: observedValue ?? `$${candidate.value_range.low.toLocaleString("en-US")}–$${candidate.value_range.high.toLocaleString("en-US")}`,
-    status: isLiveScreen ? conflictStatus : "estimated",
-    source: isLiveScreen ? sourceLabel : "Synthetic comparable projection",
+    label: isLiveScreen ? "Assessor value observation" : "Source value observation",
+    value: observedValue ?? "Not supplied",
+    status: observedValue ? conflictStatus : "unknown",
+    source: sourceLabel,
     observedAt: sourceObservation?.retrieved_at ?? candidate.as_of,
-    detail: isLiveScreen
+    detail: observedValue
       ? "Published assessor values are source observations, not a platform valuation, offer, or acquisition basis."
-      : "Scenario estimate; not an appraisal or offer recommendation.",
+      : "No verified source value was supplied; the console does not substitute an estimate.",
   });
 
   return evidence;
@@ -160,10 +220,8 @@ function mapCandidate(candidate: ApiCandidateReadModel): CandidateSummary {
         id: `${candidate.id}-conflicts`,
         label: needsIdentityReview ? "Evidence conflicts unresolved" : "Field verification pending",
         detail: needsIdentityReview
-          ? `${candidate.evidence.unresolved_conflict_count} ${candidate.synthetic ? "synthetic fixture" : "source"} conflict${candidate.evidence.unresolved_conflict_count === 1 ? "" : "s"} require review.`
-          : candidate.synthetic
-            ? "Synthetic evidence is not a substitute for field or professional verification."
-            : "Source observations are not a substitute for field or professional verification.",
+          ? `${candidate.evidence.unresolved_conflict_count} source conflict${candidate.evidence.unresolved_conflict_count === 1 ? "" : "s"} require review.`
+          : "Source observations are not a substitute for field or professional verification.",
         severity: needsIdentityReview ? "elevated" : "watch",
       },
       {
@@ -174,12 +232,8 @@ function mapCandidate(candidate: ApiCandidateReadModel): CandidateSummary {
       },
       {
         id: `${candidate.id}-source`,
-        label: candidate.synthetic
-          ? "Production sources disabled"
-          : "Opportunity Zone status unverified",
-        detail: candidate.synthetic
-          ? "This record is a deterministic contract fixture, not a live investment lead."
-          : "Opportunity Zone status remains unverified until a versioned spatial overlay completes.",
+        label: "Opportunity Zone status unverified",
+        detail: "Opportunity Zone status remains unverified until a versioned spatial overlay completes.",
         severity: "watch",
       },
     ],
@@ -208,64 +262,62 @@ function mapCandidate(candidate: ApiCandidateReadModel): CandidateSummary {
 }
 
 export function mapApiCandidatePage(page: ApiCandidatePage): TopQueueSnapshot {
+  if (page.dataset_mode !== "live") {
+    return emptyLiveSnapshot(
+      "The candidate API did not return a verified live dataset. No records were displayed.",
+      "unavailable",
+      page,
+    );
+  }
+
+  if (rightsDisplayDisabled(page)) {
+    return emptyLiveSnapshot(
+      page.warnings?.[0] ?? "Live source observations are not approved for public display.",
+      "rights_disabled",
+      page,
+      true,
+    );
+  }
+
+  const status = datasetStatus(page);
+  if (status !== "current" && status !== "stale" && status !== "partial") {
+    return emptyLiveSnapshot(
+      status === "error"
+        ? (page.warnings?.[0] ?? "The live candidate dataset reported an error.")
+        : "The live candidate API did not report a publishable dataset status. No records were displayed.",
+      status === "error" ? "error" : "unavailable",
+      page,
+      true,
+    );
+  }
+
   const first = page.items[0];
-  const requestedMode = datasetMode(page.dataset_mode);
-  const retrievedAt = page.retrieved_at ?? null;
-  const status = datasetStatus(page, requestedMode);
-  const mode = status === "fallback" ? "synthetic" : requestedMode;
-  const fallbackReason = status === "fallback"
-    ? (page.warnings?.[0] ?? "The requested live dataset could not be served.")
-    : null;
   return {
     id: `api-${page.read_model_version}`,
-    label: "API candidates",
+    label: "Verified live candidates",
     region: "Central Texas",
     timeZone: first?.timezone ?? "UTC",
     asOf: first?.as_of ?? page.retrieved_at ?? null,
     modelVersion: `${page.read_model_version} · API contract`,
-    isSynthetic: mode === "synthetic" || status === "fallback",
     provenance: {
-      mode,
+      mode: "live",
       status,
-      retrievedAt,
+      retrievedAt: page.retrieved_at ?? null,
       publishedAt: page.published_at ?? null,
       staleAfter: page.stale_after ?? null,
-      isFallback: status === "fallback",
-      fallbackReason,
-      sources: (page.sources ?? []).map((source) => ({
-        id: source.id,
-        name: source.name,
-        status: source.status,
-        retrievedAt: source.retrieved_at ?? null,
-        publishedAt: source.published_at ?? null,
-        recordCount: source.record_count ?? null,
-        detail: source.detail,
-      })),
+      statusDetail: page.warnings?.[0] ?? null,
+      sources: sourceProvenance(page),
       warnings: page.warnings ?? [],
     },
     candidates: page.items.map(mapCandidate),
   };
 }
 
-function syntheticFallback(reason: string): TopQueueSnapshot {
-  return {
-    ...topQueueSnapshot,
-    provenance: {
-      ...topQueueSnapshot.provenance,
-      status: "fallback",
-      isFallback: true,
-      fallbackReason: reason,
-      warnings: [
-        reason,
-        "This is a deterministic synthetic fallback, not live property data.",
-      ],
-    },
-  };
-}
-
 export async function loadTopQueueSnapshot(): Promise<TopQueueSnapshot> {
   const baseUrl = process.env.API_BASE_URL;
-  if (!baseUrl) return syntheticFallback("The candidate API is not configured.");
+  if (!baseUrl) {
+    return emptyLiveSnapshot("The live candidate API is not configured.", "error");
+  }
 
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/candidates?limit=25`, {
@@ -274,10 +326,15 @@ export async function loadTopQueueSnapshot(): Promise<TopQueueSnapshot> {
       signal: AbortSignal.timeout(3_000),
     });
     if (!response.ok) {
-      return syntheticFallback(`The candidate API returned HTTP ${response.status}.`);
+      const body: unknown = await response.json().catch(() => null);
+      if (isCandidatePage(body)) return mapApiCandidatePage(body);
+      return emptyLiveSnapshot(
+        `The live candidate API returned HTTP ${response.status}.`,
+        "error",
+      );
     }
     return mapApiCandidatePage((await response.json()) as ApiCandidatePage);
   } catch {
-    return syntheticFallback("The candidate API was unavailable or timed out.");
+    return emptyLiveSnapshot("The live candidate API was unavailable or timed out.", "error");
   }
 }

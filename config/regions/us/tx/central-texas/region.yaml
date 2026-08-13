@@ -73,8 +73,8 @@ sources:
     jurisdiction: us-tx-travis
     adapter: arcgis_feature_layer_v1
     policy_ref: config/ingestion/us-tx-central-texas-v1.yaml#travis_tcad_parcels
-    status: rights_review
-    schedule: null
+    status: approved_reference_display
+    schedule: monthly
   - id: bastrop_assessor
     capability: assessor_parcel
     jurisdiction: us-tx-bastrop

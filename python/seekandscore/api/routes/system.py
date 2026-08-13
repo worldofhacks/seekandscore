@@ -34,6 +34,8 @@ class VersionResponse(BaseModel):
     version: str
     api_version: str
     read_model_version: str
+    dataset_mode: str
+    candidate_serving_mode: str
     release_sha: str
     modules: tuple[str, ...]
 
@@ -66,6 +68,8 @@ def version(container: Container) -> VersionResponse:
         version=__version__,
         api_version=API_VERSION,
         read_model_version=READ_MODEL_VERSION,
+        dataset_mode=container.settings.dataset_mode,
+        candidate_serving_mode=container.candidates.serving_mode,
         release_sha=container.settings.release_sha,
         modules=tuple(module.name for module in MODULES),
     )
@@ -73,4 +77,9 @@ def version(container: Container) -> VersionResponse:
 
 @router.get(f"/{API_VERSION}/capabilities", response_model=PlatformCapabilities)
 def capabilities(container: Container) -> PlatformCapabilities:
-    return PlatformCapabilities.from_settings(container.settings)
+    return PlatformCapabilities.from_runtime(
+        container.settings,
+        candidate_serving_mode=container.candidates.serving_mode,
+        candidate_read_model_ready=container.candidates.is_ready(),
+        live_candidate_display_enabled=container.candidates.display_enabled,
+    )

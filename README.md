@@ -2,7 +2,7 @@
 
 Seek and Score is a planning-first, explainable property-intelligence platform for discovering, underwriting, and ranking real-estate investment opportunities. Central Texas is the launch market; the architecture is intentionally designed to add county-by-county data adapters and Opportunity Zone cohorts across the United States without forking the core product.
 
-> Status: Milestone 1 foundation plus the first fail-closed live-data slice. The operator console, API, workers, database migrations, local infrastructure, CI, and Railway deployment templates are runnable. A bounded Travis County parcel connector can acquire private shadow observations only after explicit activation; public live display, automated outreach, and production investment recommendations remain disabled.
+> Status: live-only property screening foundation. The deployed runtime never serves synthetic candidates or substitutes fixtures when a source fails. The first bounded Travis County parcel feed supports attributed reference display of reviewed non-owner fields; export, redistribution, owner/contact use, automated outreach, and production investment recommendations remain disabled.
 
 ## North-star outcome
 
@@ -61,10 +61,10 @@ See [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.
 
 ## What runs today
 
-The foundation slice is intentionally useful without implying that the product is ready for live acquisitions:
+The foundation slice is intentionally useful without implying that assessor observations are investment recommendations:
 
-- a responsive Next.js operator console with a synthetic Top 25 queue, evidence, risks, filters, and candidate drill-down;
-- a FastAPI read API with health, version, capabilities, synthetic candidate list, and candidate-detail endpoints;
+- a responsive Next.js operator console with a live parcel-screening queue, provenance, risks, filters, and candidate drill-down;
+- a FastAPI read API with health, version, capabilities, live candidate list, candidate detail, and source-status endpoints;
 - modular backend boundaries for platform, registry, identity, and engagement;
 - policy-gated outreach states where every outbound channel and send action fails closed;
 - Alembic foundations for the registry, identity, engagement, and platform schemas;
@@ -73,7 +73,7 @@ The foundation slice is intentionally useful without implying that the product i
 - a bounded Travis County TNR/TCAD parcel adapter with immutable raw artifacts, replay-safe observations, freshness/provenance status, and an independent public-display gate;
 - non-root production containers, continuous integration, configuration validation, and credential scanning.
 
-The web application prefers the API when `API_BASE_URL` is set and healthy. It falls back to an explicitly labeled synthetic fixture when the API is unavailable, so a preview never silently turns into a live-data product. See the [live ingestion runbook](docs/LIVE_INGESTION_RUNBOOK.md) for the reviewed cohort, activation gates, source limitations, and Railway proof procedure.
+The web application requires the API and verified live observations. If either is unavailable, it shows an explicit zero-candidate error or waiting state; it never substitutes fixture records. See the [live ingestion runbook](docs/LIVE_INGESTION_RUNBOOK.md) for the reviewed cohort, activation gates, source limitations, and Railway proof procedure.
 
 ## Quick start
 
@@ -120,7 +120,8 @@ For local persistence services, use `make infra-up`. To build and run the comple
 8. The Top 25 is a precomputed read model; user requests never wait on live source fetches.
 9. Data access, licensing, privacy, and outreach rules are product requirements.
 10. Acquisition outreach is party-verified, policy-gated, human-approved, suppressible, and auditable.
-11. A second, dissimilar market must prove the abstraction before national expansion.
+11. Every runtime is live-only; missing or failed sources produce an honest empty state, never substitute property records.
+12. A second, dissimilar market must prove the abstraction before national expansion.
 
 ## Monorepo shape
 
@@ -153,7 +154,7 @@ Source adapters, regional packs, scoring configurations, and live provider integ
 
 Railway hosts the stateless web/API/worker processes and can host the initial Redis/PostGIS services. The MVP can use a single Railway PostGIS node with tested backups. Railway's native PostgreSQL high-availability conversion does not support the community PostGIS image, so production scale has an explicit decision gate: accept the documented single-node risk or move PostGIS to a managed HA provider while leaving the applications on Railway.
 
-The public staging application remains synthetic while a separately activated acquisition job can populate a private shadow dataset. Database-backed public display is activated only after the PostGIS backup/restore path and source display rights are verified; provider outreach remains a separate production activation decision.
+The public staging application is live-only and database-backed. Its first source approval is limited to attributed reference display of the reviewed parcel/site field allowlist; ingestion, display, export, redistribution, and outreach remain independent controls. Provider outreach remains a separate production activation decision.
 
 ## Important boundaries
 

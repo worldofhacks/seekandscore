@@ -2,7 +2,7 @@ name: seekandscore
 
 x-safe-runtime: &safe-runtime
   APP_ENV: development
-  DATASET_MODE: synthetic
+  DATASET_MODE: live
   INGESTION_ENABLED: "false"
   LIVE_SOURCE_DISPLAY_ENABLED: "false"
   ALERT_DELIVERY_MODE: log

@@ -4,11 +4,13 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 
 from seekandscore.acquisition.models import (
     NormalizedParcelObservation,
     RawArtifact,
+    SourceDescriptor,
     SourceRun,
     SourceRunStatus,
 )
@@ -21,7 +23,8 @@ from seekandscore.api.dependencies import get_container
 from seekandscore.bootstrap import AppContainer
 from seekandscore.platform.settings import Settings
 from seekandscore.readmodels import LiveCandidateRepository
-from seekandscore.registry import InMemorySourceRegistry
+from seekandscore.registry import TRAVIS_TCAD_SOURCE, InMemorySourceRegistry
+from seekandscore.registry.sources import TRAVIS_TCAD_DISPLAY_APPROVAL_ID
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 SHA = "a" * 64
@@ -118,7 +121,7 @@ def test_live_projection_labels_assessor_values_and_oz_as_unverified() -> None:
     assert page.published_at is None
     assert page.sources[0].status == "current"
     candidate = page.items[0]
-    assert candidate.synthetic is False
+    assert "synthetic" not in candidate.model_dump()
     assert candidate.screening_only is True
     assert candidate.strategy == "assessor"
     assert candidate.opportunity_zone_status == "review"
@@ -139,25 +142,62 @@ def test_live_projection_fails_closed_when_display_rights_are_not_approved() -> 
     page = repository.list(limit=25, cursor=None, dataset_mode="live")
 
     assert page.items == ()
-    assert page.dataset_status == "fallback"
-    assert "rights review" in page.warnings[0]
+    assert page.dataset_status == "error"
+    assert page.sources[0].status == "unavailable"
+    assert "runtime approval gates" in page.warnings[0]
 
 
-def test_container_requires_registry_display_permission_even_with_environment_approval() -> None:
+def test_container_requires_runtime_display_flag_even_when_source_allows_display() -> None:
     settings = Settings(
         app_env="test",
         dataset_mode="live",
         database_url="sqlite://",
-        live_source_display_enabled=True,
-        live_source_display_approval_id="environment-approval-only",
     )
     container = AppContainer.build(settings)
 
     page = container.candidates.list(limit=25, cursor=None, dataset_mode="live")
 
     assert page.items == ()
-    assert page.dataset_status == "fallback"
-    assert "public display is disabled" in page.warnings[0]
+    assert page.dataset_status == "error"
+    assert container.candidates.display_enabled is False
+    assert "runtime approval gates" in page.warnings[0]
+
+
+def test_container_accepts_only_recorded_display_approval() -> None:
+    settings = Settings(
+        app_env="test",
+        dataset_mode="live",
+        database_url="sqlite://",
+        live_source_display_enabled=True,
+        live_source_display_approval_id=TRAVIS_TCAD_DISPLAY_APPROVAL_ID,
+    )
+
+    container = AppContainer.build(settings)
+
+    assert container.candidates.display_enabled is True
+
+
+def test_source_display_default_is_false_and_tcad_scope_is_explicit() -> None:
+    assert SourceDescriptor.model_fields["display_allowed"].default is False
+    assert TRAVIS_TCAD_SOURCE.display_allowed is True
+    assert TRAVIS_TCAD_SOURCE.export_allowed is False
+    assert TRAVIS_TCAD_SOURCE.redistribution_allowed is False
+    assert TRAVIS_TCAD_SOURCE.terms_uri.endswith("/MapServer/info/iteminfo")
+
+
+def test_repository_cannot_override_source_display_prohibition() -> None:
+    source = TRAVIS_TCAD_SOURCE.model_copy(update={"display_allowed": False})
+    repository = LiveCandidateRepository(
+        seeded_repository(),
+        InMemorySourceRegistry((source,)),
+        display_enabled=True,
+    )
+
+    page = repository.list(limit=25, cursor=None, dataset_mode="live")
+
+    assert repository.display_enabled is False
+    assert page.dataset_status == "error"
+    assert page.items == ()
 
 
 def test_freshness_marks_monthly_source_stale() -> None:
@@ -191,6 +231,8 @@ def test_source_api_exposes_sanitized_run_summary_only() -> None:
     assert "private-activation-id" not in payload_text
     assert SHA not in payload_text
     assert "artifact_ids" not in payload_text
+    assert response.json()["source"]["display_allowed"] is True
+    assert response.json()["source"]["export_allowed"] is False
     assert response.json()["latest_run"] == {
         "status": "succeeded",
         "started_at": "2026-08-13T12:00:00Z",
@@ -229,3 +271,72 @@ def test_live_projection_cursor_detail_and_partial_status() -> None:
     assert page.dataset_status == "partial"
     assert repository.get(candidate.id) == candidate
     assert repository.get(UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")) is None
+
+
+def test_live_projection_rejects_malformed_cursor() -> None:
+    repository = LiveCandidateRepository(
+        seeded_repository(),
+        InMemorySourceRegistry(),
+        display_enabled=True,
+    )
+
+    with pytest.raises(ValueError, match="cursor is malformed"):
+        repository.list(limit=1, cursor="not-a-cursor", dataset_mode="live")
+
+
+def test_live_candidate_api_serves_only_durable_projection_and_validates_cursor() -> None:
+    settings = Settings(app_env="test")
+    app = create_app(settings)
+    container = AppContainer.build(settings)
+    object.__setattr__(
+        container,
+        "candidates",
+        LiveCandidateRepository(
+            seeded_repository(),
+            InMemorySourceRegistry(),
+            display_enabled=True,
+        ),
+    )
+    app.dependency_overrides[get_container] = lambda: container
+
+    with TestClient(app) as live_client:
+        response = live_client.get("/v1/candidates")
+        malformed = live_client.get("/v1/candidates", params={"cursor": "not-a-cursor"})
+        candidate_id = response.json()["items"][0]["id"]
+        detail = live_client.get(f"/v1/candidates/{candidate_id}")
+
+    assert response.status_code == 200
+    assert response.json()["dataset_mode"] == "live"
+    assert response.json()["total"] == 1
+    assert "synthetic" not in response.text.lower()
+    assert response.headers["etag"].startswith('"live-assessor-screen-v1:')
+    assert malformed.status_code == 400
+    assert malformed.json()["detail"] == "cursor is malformed"
+    assert detail.status_code == 200
+
+
+def test_live_candidate_etag_is_evaluated_after_projection_availability() -> None:
+    settings = Settings(app_env="test")
+    app = create_app(settings)
+    container = AppContainer.build(settings)
+    object.__setattr__(
+        container,
+        "candidates",
+        LiveCandidateRepository(
+            seeded_repository(),
+            InMemorySourceRegistry(),
+            display_enabled=True,
+        ),
+    )
+    app.dependency_overrides[get_container] = lambda: container
+
+    with TestClient(app) as live_client:
+        initial = live_client.get("/v1/candidates")
+        cached = live_client.get(
+            "/v1/candidates",
+            headers={"If-None-Match": initial.headers["etag"]},
+        )
+
+    assert initial.status_code == 200
+    assert cached.status_code == 304
+    assert cached.content == b""

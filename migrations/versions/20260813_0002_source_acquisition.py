@@ -1,7 +1,7 @@
 """Create replay-safe source acquisition ledgers.
 
 Owning contexts: registry, acquisition/raw, observation.
-Compatibility: additive; API synthetic mode remains unchanged.
+Compatibility: additive; existing foundation tables remain unchanged.
 Backfill: none. New rows are created only by explicitly activated source runs.
 Downgrade: development only after preserving referenced raw objects.
 

@@ -1,7 +1,7 @@
 schema_version: 1
 id: us-tx-central-texas-v1
 region_id: us-tx-central-texas
-status: development
+status: approved
 default_enabled: false
 
 # Repository configuration can describe a live source, but it cannot activate one.
@@ -40,7 +40,7 @@ sources:
     capability: assessor_parcel
     jurisdiction: us-tx-travis
     authority: Travis County Transportation and Natural Resources / Travis Central Appraisal District
-    status: rights_review
+    status: approved
     enabled: false
     adapter: arcgis_feature_layer_v1
     authority_level: official_derivative
@@ -60,6 +60,7 @@ sources:
       service: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer
       layer: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0
       query: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0/query
+      item_info: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/info/iteminfo
     upstream_contract:
       geometry_type: esriGeometryPolygon
       source_spatial_reference: 2277
@@ -92,18 +93,26 @@ sources:
       arbitrary_out_fields_allowed: false
       arbitrary_order_by_allowed: false
     rights:
-      review_status: rights_review
-      access_page: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0
+      review_status: approved_reference_display
+      evidence_review_id: SRC-TCAD-TNR-REFERENCE-ACQUIRE-20260813-V1
+      operator_approval_id: SRC-TCAD-TNR-BOUNDED-DISPLAY-20260813-V1
+      reviewed_at: "2026-08-13"
+      access_page: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/info/iteminfo
       public_records_context: https://www.traviscountytx.gov/tnr/tnr-open-records
-      retention_allowed: unknown
-      internal_use_allowed: unknown
-      display_allowed: unknown
-      export_allowed: unknown
-      redistribution_allowed: unknown
+      retention_allowed: true
+      internal_use_allowed: true
+      display_allowed: true
+      export_allowed: false
+      redistribution_allowed: false
       attribution_required: true
+      approved_scope:
+        - bounded automated queries against the County TNR service
+        - private immutable raw retention
+        - public reference display of the reviewed non-owner field allowlist
       notes:
-        - A queryable official endpoint is not, by itself, approval for bulk automated reuse.
-        - TCAD separately prohibits data mining on its map-download page; resolve applicability before activation.
+        - The exact service ItemInfo identifies TCAD, says County TNR assembles the layer monthly, and states reference/informational limitations without prohibiting service queries or display.
+        - The separate TCAD PDF map-download page prohibits data mining; this approval does not scrape that page or its PDFs.
+        - No owner, contact, export, bulk redistribution, legal-boundary, appraisal, or offer use is approved.
 
   - id: federal_qoz_2018_designations
     capability: opportunity_zone

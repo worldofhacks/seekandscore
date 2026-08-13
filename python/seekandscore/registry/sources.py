@@ -12,6 +12,9 @@ from seekandscore.acquisition.models import (
     SourceRunStatus,
 )
 
+TRAVIS_TCAD_ACQUISITION_APPROVAL_ID = "SRC-TCAD-TNR-REFERENCE-ACQUIRE-20260813-V1"
+TRAVIS_TCAD_DISPLAY_APPROVAL_ID = "SRC-TCAD-TNR-BOUNDED-DISPLAY-20260813-V1"
+
 TRAVIS_TCAD_SOURCE = SourceDescriptor(
     id="travis_tcad_parcels",
     name="Travis County TNR / TCAD parcel layer",
@@ -27,7 +30,10 @@ TRAVIS_TCAD_SOURCE = SourceDescriptor(
         "https://gis.traviscountytx.gov/server1/rest/services/"
         "Boundaries_and_Jurisdictions/TCAD/MapServer/0/query"
     ),
-    terms_uri="https://www.traviscountytx.gov/open-records",
+    terms_uri=(
+        "https://gis.traviscountytx.gov/server1/rest/services/"
+        "Boundaries_and_Jurisdictions/TCAD/MapServer/info/iteminfo"
+    ),
     attribution_text="Travis Central Appraisal District; assembled by Travis County TNR",
     use_limitation=(
         "Informational/reference use only. Boundaries are approximate and not suitable for "
@@ -38,7 +44,9 @@ TRAVIS_TCAD_SOURCE = SourceDescriptor(
     geographic_vintage="current provider publication; exact publication date not exposed",
     adapter_version="travis-tcad-arcgis-v1",
     parser_version="travis-tcad-parcel-v1",
-    display_allowed=False,
+    display_allowed=True,
+    export_allowed=False,
+    redistribution_allowed=False,
 )
 
 

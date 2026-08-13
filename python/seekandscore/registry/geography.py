@@ -1,4 +1,4 @@
-"""Small registry contract and synthetic foundation data."""
+"""Small registry contract and versioned launch-region reference data."""
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,7 +20,7 @@ class InMemoryGeographyRegistry:
     """Read-only registry used until the database-backed registry lands."""
 
     def __init__(self, jurisdictions: tuple[Jurisdiction, ...] | None = None) -> None:
-        entries = jurisdictions or _SYNTHETIC_JURISDICTIONS
+        entries = jurisdictions or _CENTRAL_TEXAS_JURISDICTIONS
         self._by_id = {entry.id: entry for entry in entries}
         if len(self._by_id) != len(entries):
             raise ValueError("jurisdiction identifiers must be unique")
@@ -32,7 +32,7 @@ class InMemoryGeographyRegistry:
         return bool(self._by_id) and all(item.timezone for item in self._by_id.values())
 
 
-_SYNTHETIC_JURISDICTIONS = (
+_CENTRAL_TEXAS_JURISDICTIONS = (
     Jurisdiction(
         id="us-tx-travis",
         country_code="US",

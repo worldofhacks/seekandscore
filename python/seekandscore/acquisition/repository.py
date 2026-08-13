@@ -16,6 +16,8 @@ from seekandscore.acquisition.models import (
 
 
 class AcquisitionRepository(Protocol):
+    def is_ready(self) -> bool: ...
+
     def latest_run(self, source_id: str) -> SourceRun | None: ...
 
     def latest_artifact(self, source_id: str) -> RawArtifact | None: ...
@@ -32,6 +34,8 @@ class AcquisitionRepository(Protocol):
         self, *, limit: int, offset: int = 0
     ) -> tuple[NormalizedParcelObservation, ...]: ...
 
+    def count_latest_observations(self) -> int: ...
+
 
 class MemoryAcquisitionRepository:
     def __init__(self) -> None:
@@ -39,6 +43,9 @@ class MemoryAcquisitionRepository:
         self.artifacts: dict[object, RawArtifact] = {}
         self.observations: dict[object, NormalizedParcelObservation] = {}
         self.quarantine: dict[object, QuarantinedRecord] = {}
+
+    def is_ready(self) -> bool:
+        return True
 
     def latest_run(self, source_id: str) -> SourceRun | None:
         matches = [run for run in self.runs.values() if run.source_id == source_id]
@@ -98,6 +105,9 @@ class MemoryAcquisitionRepository:
         )
         return tuple(ordered[offset : offset + limit])
 
+    def count_latest_observations(self) -> int:
+        return len({item.local_parcel_id for item in self.observations.values()})
+
 
 metadata = sa.MetaData()
 
@@ -150,6 +160,15 @@ class PostgresAcquisitionRepository:
 
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
+
+    def is_ready(self) -> bool:
+        try:
+            with self.engine.connect() as connection:
+                for table in (source_run_table, raw_artifact_table, observation_table):
+                    connection.execute(sa.select(table.c.id).limit(0))
+        except sa.exc.SQLAlchemyError:
+            return False
+        return True
 
     def latest_run(self, source_id: str) -> SourceRun | None:
         statement = (
@@ -286,3 +305,10 @@ class PostgresAcquisitionRepository:
         with self.engine.connect() as connection:
             rows = connection.scalars(statement).all()
         return tuple(NormalizedParcelObservation.model_validate(row) for row in rows)
+
+    def count_latest_observations(self) -> int:
+        statement = sa.select(
+            sa.func.count(sa.distinct(observation_table.c.source_record_id))
+        ).where(observation_table.c.source_id == "travis_tcad_parcels")
+        with self.engine.connect() as connection:
+            return int(connection.scalar(statement) or 0)

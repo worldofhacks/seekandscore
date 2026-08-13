@@ -18,6 +18,7 @@ from seekandscore.acquisition.adapters.travis_tcad import (
 from seekandscore.acquisition.models import RawArtifact, SourceRun, SourceRunStatus
 from seekandscore.acquisition.repository import AcquisitionRepository
 from seekandscore.acquisition.store import ArtifactCollisionError, ArtifactStore
+from seekandscore.registry.sources import TRAVIS_TCAD_ACQUISITION_APPROVAL_ID
 
 ARTIFACT_NAMESPACE = UUID("86066bca-12b7-4e7c-adc8-bc57ce7bb2b9")
 Clock = Callable[[], datetime]
@@ -67,8 +68,10 @@ class AcquisitionService:
             raise IngestionDisabledError(
                 "live acquisition requires INGESTION_ENABLED=true and DATASET_MODE=live"
             )
-        if not activation_id:
-            raise IngestionDisabledError("live acquisition requires an activation/rights record")
+        if activation_id != TRAVIS_TCAD_ACQUISITION_APPROVAL_ID:
+            raise IngestionDisabledError(
+                "live acquisition requires the approved source acquisition record"
+            )
 
         started_at = self.clock()
         config_hash = _configuration_hash(self.adapter)

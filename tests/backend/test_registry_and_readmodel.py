@@ -1,7 +1,6 @@
-"""Bounded-context registry and projection tests."""
+"""Bounded-context registry tests."""
 
 from seekandscore.bootstrap import MODULES
-from seekandscore.readmodels import SyntheticCandidateRepository
 from seekandscore.registry import InMemoryGeographyRegistry
 
 
@@ -17,11 +16,10 @@ def test_module_ownership_is_declared_and_unique() -> None:
     assert all(module.owns for module in MODULES)
 
 
-def test_synthetic_projection_is_deterministic() -> None:
-    first = SyntheticCandidateRepository(InMemoryGeographyRegistry())
-    second = SyntheticCandidateRepository(InMemoryGeographyRegistry())
+def test_launch_geography_reference_data_is_deterministic() -> None:
+    first = InMemoryGeographyRegistry()
+    second = InMemoryGeographyRegistry()
 
-    first_page = first.list(limit=25, cursor=None, dataset_mode="synthetic")
-    second_page = second.list(limit=25, cursor=None, dataset_mode="synthetic")
-
-    assert first_page == second_page
+    assert first.get("us-tx-travis") == second.get("us-tx-travis")
+    assert first.get("us-tx-bastrop").county_fips == "021"  # type: ignore[union-attr]
+    assert first.get("us-tx-caldwell").county_fips == "055"  # type: ignore[union-attr]

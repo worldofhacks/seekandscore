@@ -11,6 +11,9 @@ class PlatformCapabilities(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     dataset_mode: str
+    candidate_serving_mode: str
+    candidate_read_model_ready: bool
+    live_candidate_display_enabled: bool
     ingestion_enabled: bool
     alert_delivery_mode: str
     outreach_mode: str
@@ -19,9 +22,19 @@ class PlatformCapabilities(BaseModel):
     external_effects_enabled: bool
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "PlatformCapabilities":
+    def from_runtime(
+        cls,
+        settings: Settings,
+        *,
+        candidate_serving_mode: str,
+        candidate_read_model_ready: bool,
+        live_candidate_display_enabled: bool,
+    ) -> "PlatformCapabilities":
         return cls(
             dataset_mode=settings.dataset_mode,
+            candidate_serving_mode=candidate_serving_mode,
+            candidate_read_model_ready=candidate_read_model_ready,
+            live_candidate_display_enabled=live_candidate_display_enabled,
             ingestion_enabled=settings.ingestion_enabled,
             alert_delivery_mode=settings.alert_delivery_mode,
             outreach_mode=settings.outreach_mode,
