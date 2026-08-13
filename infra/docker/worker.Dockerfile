@@ -9,15 +9,14 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY python ./python
 COPY services ./services
 COPY migrations ./migrations
 COPY config ./config
 COPY scripts/runtime/python-entrypoint.sh ./scripts/runtime/python-entrypoint.sh
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev
 
 FROM python:3.13.7-slim-bookworm AS runtime
 ENV PATH=/app/.venv/bin:$PATH \
