@@ -2,7 +2,7 @@
 
 Seek and Score is a planning-first, explainable property-intelligence platform for discovering, underwriting, and ranking real-estate investment opportunities. Central Texas is the launch market; the architecture is intentionally designed to add county-by-county data adapters and Opportunity Zone cohorts across the United States without forking the core product.
 
-> Status: architecture and delivery planning. No production application or live investment recommendations exist yet.
+> Status: Milestone 1 foundation. A synthetic-only operator console, API, workers, database migrations, local infrastructure, CI, and Railway deployment templates are runnable. Live data ingestion, automated outreach, and production investment recommendations remain disabled.
 
 ## North-star outcome
 
@@ -59,6 +59,41 @@ Parcel location is also not a legal conclusion that an investment qualifies for 
 
 See [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.md).
 
+## What runs today
+
+The foundation slice is intentionally useful without implying that the product is ready for live acquisitions:
+
+- a responsive Next.js operator console with a synthetic Top 25 queue, evidence, risks, filters, and candidate drill-down;
+- a FastAPI read API with health, version, capabilities, synthetic candidate list, and candidate-detail endpoints;
+- modular backend boundaries for platform, registry, identity, and engagement;
+- policy-gated outreach states where every outbound channel and send action fails closed;
+- Alembic foundations for the registry, identity, engagement, and platform schemas;
+- worker and scheduler entrypoints with inert defaults;
+- PostGIS, Redis, and private MinIO services for local development;
+- non-root production containers, continuous integration, configuration validation, and credential scanning.
+
+The web application prefers the API when `API_BASE_URL` is set and healthy. It falls back to an explicitly labeled synthetic fixture when the API is unavailable, so a preview never silently turns into a live-data product.
+
+## Quick start
+
+Prerequisites are Python 3.12+, [uv](https://docs.astral.sh/uv/), Node.js 22+, pnpm 10+, and Docker for the infrastructure profile.
+
+```bash
+make install
+make check
+```
+
+Run the API and web application in separate terminals:
+
+```bash
+uv run python -m seekandscore.api
+pnpm dev
+```
+
+Then open `http://localhost:3000`. The API exposes `http://localhost:8000/readyz`, `/version`, `/v1/capabilities`, and `/v1/candidates`.
+
+For local persistence services, use `make infra-up`. To build and run the complete container stack with the same safe defaults, use `make app-up`.
+
 ## Repository guide
 
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — phases, deliverables, acceptance criteria, dependencies, and risks
@@ -85,7 +120,7 @@ See [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.
 10. Acquisition outreach is party-verified, policy-gated, human-approved, suppressible, and auditable.
 11. A second, dissimilar market must prove the abstraction before national expansion.
 
-## Proposed monorepo shape
+## Monorepo shape
 
 ```text
 apps/
@@ -97,25 +132,26 @@ packages/
   contracts/            OpenAPI, JSON Schema, generated clients
   ui/                   shared TypeScript UI primitives
 python/seekandscore/
-  modules/              backend bounded contexts
-  adapters/             source-provider implementations
-config/
-  regions/              geography and jurisdiction packs
-  scoring/              versioned deterministic score models
-  outreach/             versioned channel and jurisdiction-safe defaults
+  platform/             configuration and shared application primitives
+  registry/             geography-neutral property registry contracts
+  identity/             parties, roles, and identity evidence
+  engagement/           policy-gated contact and scheduling boundary
 infra/
+  docker/               production container definitions
   railway/              service configuration and runbooks
 docs/
   adr/                   architecture decision records
+tests/
+  backend/               API, settings, read-model, and runtime tests
 ```
 
-This structure is the target scaffold for Milestone 1; the current repository intentionally begins with decisions and execution criteria before code.
+Source adapters, regional packs, scoring configurations, and live provider integrations will be added behind these boundaries in later milestones.
 
 ## Railway strategy
 
-Railway will host stateless web/API/worker processes and the initial Redis/PostGIS services. The MVP can use a single Railway PostGIS node with tested backups. Railway's native PostgreSQL high-availability conversion does not support the community PostGIS image, so production scale has an explicit decision gate: accept the documented single-node risk or move PostGIS to a managed HA provider while leaving the applications on Railway.
+Railway hosts the stateless web/API/worker processes and can host the initial Redis/PostGIS services. The MVP can use a single Railway PostGIS node with tested backups. Railway's native PostgreSQL high-availability conversion does not support the community PostGIS image, so production scale has an explicit decision gate: accept the documented single-node risk or move PostGIS to a managed HA provider while leaving the applications on Railway.
 
-No Railway project is created in this planning commit. Deployment starts after the foundation service has health endpoints, migrations, a synthetic fixture dataset, and a restore-tested database.
+The initial staging release deploys only synthetic application behavior with ingestion and outreach disabled. Database-backed ingestion is activated only after the PostGIS backup/restore path and source rights are verified; provider outreach remains a separate production activation decision.
 
 ## Important boundaries
 

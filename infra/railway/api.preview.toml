@@ -1,0 +1,25 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/api.Dockerfile"
+watchPatterns = [
+  "services/api/**",
+  "python/seekandscore/**",
+  "packages/contracts/**",
+  "pyproject.toml",
+  "uv.lock",
+  "infra/docker/api.Dockerfile",
+  "scripts/runtime/python-entrypoint.sh"
+]
+
+[deploy]
+startCommand = "python -m seekandscore.api"
+healthcheckPath = "/readyz"
+healthcheckTimeout = 300
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 10
+overlapSeconds = 15
+drainingSeconds = 30
+
+# Synthetic previews deliberately have no database dependency and therefore do
+# not run migrations. Database-backed staging uses api.example.toml, where the
+# API remains the sole migration owner.

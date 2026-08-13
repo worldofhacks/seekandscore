@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+: "${DATASET_MODE:=synthetic}"
+: "${INGESTION_ENABLED:=false}"
+: "${ALERT_DELIVERY_MODE:=log}"
+: "${OUTREACH_MODE:=disabled}"
+: "${OUTREACH_SEND_ENABLED:=false}"
+
+export DATASET_MODE INGESTION_ENABLED ALERT_DELIVERY_MODE OUTREACH_MODE OUTREACH_SEND_ENABLED
+
+exec "$@"

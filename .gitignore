@@ -21,6 +21,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
 # Data and geospatial artifacts
 data/raw/
@@ -40,3 +42,9 @@ data/processed/
 .vscode/
 *.log
 .railway/
+
+# Local service data and overrides
+compose.override.yaml
+.minio/
+output/playwright/
+.playwright-cli/
