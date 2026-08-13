@@ -6,9 +6,15 @@ from functools import lru_cache
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from seekandscore.acquisition.models import SourceRunProfile
 from seekandscore.registry.sources import (
     TRAVIS_TCAD_ACQUISITION_APPROVAL_ID,
+    TRAVIS_TCAD_AUTHORIZED_CITIES,
+    TRAVIS_TCAD_COHORT_MAX_RECORDS,
+    TRAVIS_TCAD_COHORT_PAGE_SIZE,
     TRAVIS_TCAD_DISPLAY_APPROVAL_ID,
+    TRAVIS_TCAD_PROOF_MAX_RECORDS,
+    TRAVIS_TCAD_PROOF_PAGE_SIZE,
 )
 
 
@@ -61,11 +67,12 @@ class Settings(BaseSettings):
     ingestion_enabled: bool = False
     ingestion_activation_id: str | None = None
     ingestion_source_id: str = "travis_tcad_parcels"
-    ingestion_page_size: int = Field(default=250, ge=1, le=1000)
-    ingestion_max_records: int = Field(default=250, ge=1, le=10_000)
+    ingestion_run_profile: SourceRunProfile = SourceRunProfile.PROOF
+    ingestion_page_size: int = Field(default=2, ge=1, le=1000)
+    ingestion_max_records: int = Field(default=2, ge=1, le=10_000)
     ingestion_where: str = "PROP_ID IS NOT NULL AND tcad_acres >= 1"
     ingestion_order_by: str = "OBJECTID ASC"
-    ingestion_cities: str = ""
+    ingestion_cities: str = "DEL VALLE,MANOR"
     ingestion_http_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     ingestion_min_request_interval_seconds: float = Field(default=1.0, ge=0.25, le=10)
     ingestion_max_retries: int = Field(default=3, ge=0, le=5)
@@ -116,6 +123,8 @@ class Settings(BaseSettings):
                 raise ValueError("enabled ingestion requires DATASET_MODE=live")
             if self.ingestion_activation_id != TRAVIS_TCAD_ACQUISITION_APPROVAL_ID:
                 raise ValueError("enabled ingestion requires the approved INGESTION_ACTIVATION_ID")
+            if self.ingestion_source_id != "travis_tcad_parcels":
+                raise ValueError("enabled ingestion requires the approved Travis TCAD source")
             if self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION} and not all(
                 (
                     self.object_storage_endpoint,
@@ -137,6 +146,23 @@ class Settings(BaseSettings):
         cities = tuple(city.strip().upper() for city in self.ingestion_cities.split(",") if city)
         if len(cities) > 20 or any(not city.replace(" ", "").isalpha() for city in cities):
             raise ValueError("INGESTION_CITIES must contain at most 20 city names")
+        if self.ingestion_enabled:
+            if cities != TRAVIS_TCAD_AUTHORIZED_CITIES:
+                raise ValueError("enabled ingestion is limited to INGESTION_CITIES=DEL VALLE,MANOR")
+            expected_bounds = {
+                SourceRunProfile.PROOF: (
+                    TRAVIS_TCAD_PROOF_PAGE_SIZE,
+                    TRAVIS_TCAD_PROOF_MAX_RECORDS,
+                ),
+                SourceRunProfile.COHORT: (
+                    TRAVIS_TCAD_COHORT_PAGE_SIZE,
+                    TRAVIS_TCAD_COHORT_MAX_RECORDS,
+                ),
+            }
+            if (self.ingestion_page_size, self.ingestion_max_records) != expected_bounds[
+                self.ingestion_run_profile
+            ]:
+                raise ValueError("enabled ingestion bounds do not match INGESTION_RUN_PROFILE")
         if (
             self.live_source_display_enabled
             and self.live_source_display_approval_id != TRAVIS_TCAD_DISPLAY_APPROVAL_ID
@@ -144,6 +170,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "live source display requires the approved LIVE_SOURCE_DISPLAY_APPROVAL_ID"
             )
+        if self.live_source_display_enabled and (
+            self.outreach_mode is not OutreachMode.DISABLED or self.outreach_send_enabled
+        ):
+            raise ValueError("live source display requires outreach to remain disabled")
 
         if self.alert_delivery_mode is AlertDeliveryMode.PROVIDER:
             if self.app_env is not AppEnvironment.PRODUCTION:

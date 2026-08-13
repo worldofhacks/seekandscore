@@ -12,6 +12,7 @@ from seekandscore.acquisition.models import (
     RawArtifact,
     SourceDescriptor,
     SourceRun,
+    SourceRunProfile,
     SourceRunStatus,
 )
 from seekandscore.acquisition.repository import (
@@ -77,11 +78,13 @@ def seeded_repository() -> MemoryAcquisitionRepository:
             requested_at=NOW,
             started_at=NOW,
             completed_at=NOW,
+            retrieved_at=NOW,
             records_fetched=1,
             observations_created=1,
             artifact_ids=(artifact.id,),
             adapter_version="travis-tcad-arcgis-v1",
             parser_version="travis-tcad-parcel-v1",
+            run_profile=SourceRunProfile.COHORT,
             configuration_hash="d" * 64,
             activation_id="private-activation-id",
         )
@@ -254,6 +257,7 @@ def test_live_projection_cursor_detail_and_partial_status() -> None:
                 "id": UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
                 "status": SourceRunStatus.PARTIAL,
                 "partial": True,
+                "run_profile": SourceRunProfile.PROOF,
                 "started_at": NOW + timedelta(seconds=1),
                 "completed_at": NOW + timedelta(seconds=1),
             }
@@ -268,9 +272,128 @@ def test_live_projection_cursor_detail_and_partial_status() -> None:
     page = repository.list(limit=1, cursor=None, dataset_mode="live")
     candidate = page.items[0]
 
-    assert page.dataset_status == "partial"
+    assert page.dataset_status == "current"
+    assert page.partial is False
     assert repository.get(candidate.id) == candidate
     assert repository.get(UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")) is None
+
+
+def test_failed_refresh_observations_do_not_leak_into_last_complete_snapshot() -> None:
+    acquisition = seeded_repository()
+    original = next(iter(acquisition.observations.values()))
+    failed_artifact = RawArtifact(
+        id=UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+        source_id="travis_tcad_parcels",
+        sha256="e" * 64,
+        byte_count=100,
+        media_type="application/json",
+        storage_uri="s3://private/failed.json",
+        original_uri="https://example.invalid/query",
+        request_params={},
+        retrieved_at=NOW + timedelta(days=1),
+    )
+    acquisition.save_artifact(failed_artifact)
+    acquisition.save_observations(
+        (
+            original.model_copy(
+                update={
+                    "id": UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                    "source_record_id": "999",
+                    "local_parcel_id": "999999",
+                    "artifact_id": failed_artifact.id,
+                    "artifact_sha256": failed_artifact.sha256,
+                    "observed_at": failed_artifact.retrieved_at,
+                }
+            ),
+        )
+    )
+    complete = acquisition.latest_complete_run(
+        "travis_tcad_parcels", run_profile=SourceRunProfile.COHORT
+    )
+    assert complete is not None
+    acquisition.save_run(
+        complete.model_copy(
+            update={
+                "id": UUID("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+                "status": SourceRunStatus.FAILED,
+                "started_at": failed_artifact.retrieved_at,
+                "completed_at": failed_artifact.retrieved_at,
+                "retrieved_at": failed_artifact.retrieved_at,
+                "artifact_ids": (failed_artifact.id,),
+                "partial": True,
+                "error_code": "IncompleteCohortError",
+            }
+        )
+    )
+
+    page = LiveCandidateRepository(
+        acquisition, InMemorySourceRegistry(), display_enabled=True
+    ).list(limit=25, cursor=None, dataset_mode="live")
+
+    assert page.total == 1
+    assert page.items[0].parcel_id == "TCAD-700001"
+    assert page.dataset_status == "stale"
+    assert page.sources[0].status == "error"
+    assert "last complete snapshot" in page.warnings[0]
+
+
+def test_new_complete_snapshot_removes_parcels_absent_from_refresh() -> None:
+    acquisition = seeded_repository()
+    original = next(iter(acquisition.observations.values()))
+    old_removed = original.model_copy(
+        update={
+            "id": UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+            "source_record_id": "102",
+            "local_parcel_id": "700002",
+        }
+    )
+    acquisition.save_observations((old_removed,))
+    refreshed_artifact = RawArtifact(
+        id=UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+        source_id="travis_tcad_parcels",
+        sha256="f" * 64,
+        byte_count=100,
+        media_type="application/json",
+        storage_uri="s3://private/refreshed.json",
+        original_uri="https://example.invalid/query",
+        request_params={},
+        retrieved_at=NOW + timedelta(days=1),
+    )
+    acquisition.save_artifact(refreshed_artifact)
+    refreshed = original.model_copy(
+        update={
+            "id": UUID("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+            "artifact_id": refreshed_artifact.id,
+            "artifact_sha256": refreshed_artifact.sha256,
+            "observed_at": refreshed_artifact.retrieved_at,
+        }
+    )
+    acquisition.save_observations((refreshed,))
+    current = acquisition.latest_complete_run(
+        "travis_tcad_parcels", run_profile=SourceRunProfile.COHORT
+    )
+    assert current is not None
+    acquisition.save_run(
+        current.model_copy(
+            update={
+                "id": UUID("11111111-1111-4111-8111-111111111111"),
+                "started_at": refreshed_artifact.retrieved_at,
+                "completed_at": refreshed_artifact.retrieved_at,
+                "retrieved_at": refreshed_artifact.retrieved_at,
+                "records_fetched": 1,
+                "observations_created": 1,
+                "artifact_ids": (refreshed_artifact.id,),
+            }
+        )
+    )
+
+    page = LiveCandidateRepository(
+        acquisition, InMemorySourceRegistry(), display_enabled=True
+    ).list(limit=25, cursor=None, dataset_mode="live")
+
+    assert page.total == 1
+    assert [item.parcel_id for item in page.items] == ["TCAD-700001"]
+    assert page.retrieved_at == refreshed_artifact.retrieved_at
 
 
 def test_live_projection_rejects_malformed_cursor() -> None:

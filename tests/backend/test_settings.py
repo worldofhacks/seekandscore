@@ -15,6 +15,10 @@ def test_safe_defaults() -> None:
 
     assert settings.dataset_mode == "live"
     assert settings.ingestion_enabled is False
+    assert settings.ingestion_run_profile == "proof"
+    assert settings.ingestion_page_size == 2
+    assert settings.ingestion_max_records == 2
+    assert settings.ingestion_cities == "DEL VALLE,MANOR"
     assert settings.alert_delivery_mode == "log"
     assert settings.outreach_mode == "disabled"
     assert settings.outreach_send_enabled is False
@@ -113,6 +117,36 @@ def test_staging_ingestion_requires_durable_object_storage() -> None:
         )
 
 
+def test_enabled_ingestion_is_limited_to_exact_proof_or_complete_cohort_profile() -> None:
+    common = {
+        "app_env": "staging",
+        "dataset_mode": "live",
+        "ingestion_enabled": True,
+        "ingestion_activation_id": TRAVIS_TCAD_ACQUISITION_APPROVAL_ID,
+        "database_url": "postgresql+psycopg://app:secret@db/app",
+        "object_storage_endpoint": "https://objects.example.test",
+        "object_storage_bucket": "private-raw",
+        "object_storage_access_key_id": "access",
+        "object_storage_secret_access_key": "secret",
+    }
+
+    proof = Settings(**common)
+    cohort = Settings(
+        **common,
+        ingestion_run_profile="cohort",
+        ingestion_page_size=250,
+        ingestion_max_records=1000,
+    )
+
+    assert proof.ingestion_run_profile == "proof"
+    assert cohort.ingestion_run_profile == "cohort"
+
+    with pytest.raises(ValidationError, match="limited to INGESTION_CITIES"):
+        Settings(**common, ingestion_cities="AUSTIN")
+    with pytest.raises(ValidationError, match="bounds do not match"):
+        Settings(**common, ingestion_run_profile="cohort")
+
+
 def test_public_live_display_requires_separate_approval() -> None:
     with pytest.raises(ValidationError, match="approved LIVE_SOURCE_DISPLAY_APPROVAL_ID"):
         Settings(live_source_display_enabled=True)
@@ -128,3 +162,12 @@ def test_public_live_display_requires_separate_approval() -> None:
         live_source_display_approval_id=TRAVIS_TCAD_DISPLAY_APPROVAL_ID,
     )
     assert settings.live_source_display_enabled is True
+
+
+def test_live_display_cannot_enable_outreach() -> None:
+    with pytest.raises(ValidationError, match="outreach to remain disabled"):
+        Settings(
+            live_source_display_enabled=True,
+            live_source_display_approval_id=TRAVIS_TCAD_DISPLAY_APPROVAL_ID,
+            outreach_mode="manual",
+        )

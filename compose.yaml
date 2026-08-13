@@ -29,8 +29,10 @@ x-python-service: &python-service
     OBJECT_STORAGE_PREFIX: raw-artifacts
     INGESTION_CONFIG_PATH: config/ingestion/us-tx-central-texas-v1.yaml
     INGESTION_SOURCE_ID: travis_tcad_parcels
-    INGESTION_PAGE_SIZE: "250"
-    INGESTION_MAX_RECORDS: "250"
+    INGESTION_RUN_PROFILE: proof
+    INGESTION_PAGE_SIZE: "2"
+    INGESTION_MAX_RECORDS: "2"
+    INGESTION_CITIES: DEL VALLE,MANOR
     INGESTION_HTTP_TIMEOUT_SECONDS: "30"
     INGESTION_MIN_REQUEST_INTERVAL_SECONDS: "1"
     INGESTION_MAX_RETRIES: "3"
@@ -163,6 +165,9 @@ services:
     init: true
     environment:
       NODE_ENV: production
+      APP_ENV: development
+      DATASET_MODE: live
+      WEB_PRIVATE_ACCESS_ENABLED: "false"
       PORT: "3000"
       HOSTNAME: 0.0.0.0
       API_BASE_URL: http://api:8000

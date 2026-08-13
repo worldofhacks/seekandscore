@@ -6,6 +6,7 @@ import httpx
 import sqlalchemy as sa
 
 from seekandscore.acquisition.adapters import TravisTcadArcGisAdapter, TravisTcadQuery
+from seekandscore.acquisition.models import AcquisitionCompletenessPolicy, SourceRunProfile
 from seekandscore.acquisition.repository import PostgresAcquisitionRepository
 from seekandscore.acquisition.service import AcquisitionService
 from seekandscore.acquisition.store import ArtifactStore, FileArtifactStore, S3ArtifactStore
@@ -25,6 +26,12 @@ def build_acquisition_service(settings: Settings) -> AcquisitionService:
         order_by=settings.ingestion_order_by,
         cities=tuple(
             city.strip().upper() for city in settings.ingestion_cities.split(",") if city.strip()
+        ),
+        run_profile=SourceRunProfile(settings.ingestion_run_profile),
+        completeness_policy=(
+            AcquisitionCompletenessPolicy.REQUIRE_COMPLETE
+            if settings.ingestion_run_profile is SourceRunProfile.COHORT
+            else AcquisitionCompletenessPolicy.ALLOW_BOUNDED_PARTIAL
         ),
     )
     adapter = TravisTcadArcGisAdapter(query)

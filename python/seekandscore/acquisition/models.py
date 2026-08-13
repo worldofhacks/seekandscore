@@ -19,6 +19,16 @@ class SourceRunStatus(StrEnum):
     FAILED = "failed"
 
 
+class SourceRunProfile(StrEnum):
+    PROOF = "proof"
+    COHORT = "cohort"
+
+
+class AcquisitionCompletenessPolicy(StrEnum):
+    ALLOW_BOUNDED_PARTIAL = "allow_bounded_partial"
+    REQUIRE_COMPLETE = "require_complete"
+
+
 class FreshnessStatus(StrEnum):
     CURRENT = "current"
     STALE = "stale"
@@ -77,6 +87,7 @@ class SourceRun(BaseModel):
     requested_at: datetime
     started_at: datetime
     completed_at: datetime | None = None
+    retrieved_at: datetime | None = None
     records_fetched: int = Field(default=0, ge=0)
     observations_created: int = Field(default=0, ge=0)
     records_quarantined: int = Field(default=0, ge=0)
@@ -87,8 +98,19 @@ class SourceRun(BaseModel):
     error_detail: str | None = None
     adapter_version: str
     parser_version: str
+    run_profile: SourceRunProfile = SourceRunProfile.PROOF
     configuration_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     activation_id: str
+
+    @property
+    def is_complete_cohort(self) -> bool:
+        return bool(
+            self.run_profile is SourceRunProfile.COHORT
+            and self.status in {SourceRunStatus.SUCCEEDED, SourceRunStatus.SUCCEEDED_UNCHANGED}
+            and not self.partial
+            and self.records_quarantined == 0
+            and self.artifact_ids
+        )
 
 
 class NormalizedParcelObservation(BaseModel):

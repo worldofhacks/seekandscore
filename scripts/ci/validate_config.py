@@ -48,6 +48,21 @@ def require_safe_runtime_defaults() -> list[str]:
         failures.append("web entrypoint must reject non-live dataset modes")
     if 'API_BASE_URL is required in $APP_ENV' not in web_entrypoint:
         failures.append("web staging/production runtime must require API_BASE_URL")
+    if "web startup refused: unsupported APP_ENV" not in web_entrypoint:
+        failures.append("web runtime must reject unknown application environments")
+    if 'WEB_PRIVATE_ACCESS_ENABLED must be true in $APP_ENV' not in web_entrypoint:
+        failures.append("web staging/production runtime must require private access")
+    for name in ("WEB_PRIVATE_ACCESS_USERNAME", "WEB_PRIVATE_ACCESS_PASSWORD"):
+        if f"{name} is required in $APP_ENV" not in web_entrypoint:
+            failures.append(f"web staging/production runtime must require {name}")
+    if "WEB_PRIVATE_ACCESS_PASSWORD must be at least 24 characters" not in web_entrypoint:
+        failures.append("web staging/production runtime must enforce private password length")
+
+    web_proxy = (ROOT / "apps/web/proxy.ts").read_text(encoding="utf-8")
+    if 'const HEALTH_PATH = "/api/health"' not in web_proxy:
+        failures.append("web private-access proxy must preserve only /api/health")
+    if 'matcher: "/:path*"' not in web_proxy:
+        failures.append("web private-access proxy must cover every application path")
 
     web_dockerfile = (ROOT / "infra/docker/web.Dockerfile").read_text(encoding="utf-8")
     if "APP_ENV=production" not in web_dockerfile:

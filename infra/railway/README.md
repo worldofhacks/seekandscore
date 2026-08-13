@@ -27,6 +27,20 @@ OUTREACH_SEND_ENABLED=false
 
 Set the same values explicitly in every Railway environment so deployment state is visible in the dashboard. Missing variables remain safe; changing a variable alone does not bypass application policy gates. When activating a template, record live-schema validation in the associated issue and retain the repository root as the build context.
 
+The web service additionally refuses to start in staging or production unless
+the single-operator access gate is complete:
+
+```text
+WEB_PRIVATE_ACCESS_ENABLED=true
+WEB_PRIVATE_ACCESS_USERNAME=<sealed server-only value>
+WEB_PRIVATE_ACCESS_PASSWORD=<sealed generated high-entropy value, 24+ characters>
+```
+
+Never prefix either credential with `NEXT_PUBLIC_`. The gate protects every web
+path except the data-free `/api/health` Railway check. Keep the API on Railway
+private networking when live display is enabled; a public API domain is not
+protected by the web credential.
+
 See [the full deployment plan](../../docs/RAILWAY_DEPLOYMENT.md).
 
 ## First live-ingestion service
@@ -38,12 +52,21 @@ APP_ENV=staging
 DATASET_MODE=live
 INGESTION_ENABLED=false
 INGESTION_SOURCE_ID=travis_tcad_parcels
-INGESTION_PAGE_SIZE=250
-INGESTION_MAX_RECORDS=250
+INGESTION_RUN_PROFILE=proof
+INGESTION_PAGE_SIZE=2
+INGESTION_MAX_RECORDS=2
+INGESTION_CITIES=DEL VALLE,MANOR
 LIVE_SOURCE_DISPLAY_ENABLED=false
 OUTREACH_MODE=disabled
 OUTREACH_SEND_ENABLED=false
 ```
+
+The runtime accepts only two reviewed enabled profiles. Use `proof` with the
+exact `2`/`2` bounds for the two-record private acquisition and replay. After
+both proof runs pass, use `cohort` with `INGESTION_PAGE_SIZE=250` and
+`INGESTION_MAX_RECORDS=1000` for the complete `DEL VALLE,MANOR` cohort and its
+replay. The monthly service must retain the `cohort` profile and those exact
+bounds; it must never schedule the partial proof profile.
 
 Create a private Railway bucket displayed as `raw-artifacts` in the same staging environment and initial region (`sjc`). Map references exactly:
 

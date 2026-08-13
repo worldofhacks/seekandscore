@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from seekandscore.acquisition.models import (
     FreshnessStatus,
     NormalizedParcelObservation,
-    SourceRunStatus,
+    SourceRunProfile,
 )
 from seekandscore.acquisition.repository import AcquisitionRepository
 from seekandscore.identity import CandidateKind
@@ -26,6 +26,7 @@ from seekandscore.readmodels.candidates import (
     SourceObservationFields,
 )
 from seekandscore.registry import InMemorySourceRegistry
+from seekandscore.registry.sources import TRAVIS_TCAD_AUTHORIZED_CITIES
 from seekandscore.version import READ_MODEL_VERSION
 
 LIVE_CANDIDATE_NAMESPACE = UUID("97a9e56d-a6a3-444c-91e7-25558cc63f19")
@@ -101,10 +102,10 @@ class LiveCandidateRepository:
             )
         offset = _decode_live_cursor(cursor) if cursor else 0
         try:
-            observations = self.acquisition.list_latest_observations(limit=limit + 1, offset=offset)
-            total = self.acquisition.count_latest_observations()
-            last_run = self.acquisition.latest_run(LIVE_SOURCE_ID)
-            latest_artifact = self.acquisition.latest_artifact(LIVE_SOURCE_ID)
+            latest_attempt = self.acquisition.latest_run(LIVE_SOURCE_ID)
+            last_run = self.acquisition.latest_complete_run(
+                LIVE_SOURCE_ID, run_profile=SourceRunProfile.COHORT
+            )
         except sa.exc.SQLAlchemyError:
             return _empty_page(
                 sources=self.sources,
@@ -112,39 +113,71 @@ class LiveCandidateRepository:
                 source_status="error",
                 warning="The live candidate store could not complete the request.",
             )
-        if last_run is None or latest_artifact is None or not observations:
+        if last_run is None:
             return _empty_page(
                 sources=self.sources,
                 dataset_mode=dataset_mode,
                 source_status="unknown",
-                warning="No successful live candidate projection is available.",
+                warning="No complete approved live cohort is available.",
             )
-        if last_run.status not in {
-            SourceRunStatus.SUCCEEDED,
-            SourceRunStatus.SUCCEEDED_UNCHANGED,
-            SourceRunStatus.PARTIAL,
-        }:
+        try:
+            observations = self.acquisition.list_latest_observations(
+                limit=limit + 1,
+                offset=offset,
+                artifact_ids=last_run.artifact_ids,
+                cities=TRAVIS_TCAD_AUTHORIZED_CITIES,
+            )
+            total = self.acquisition.count_latest_observations(
+                artifact_ids=last_run.artifact_ids,
+                cities=TRAVIS_TCAD_AUTHORIZED_CITIES,
+            )
+            latest_artifact = self.acquisition.latest_artifact(
+                LIVE_SOURCE_ID, artifact_ids=last_run.artifact_ids
+            )
+        except sa.exc.SQLAlchemyError:
             return _empty_page(
                 sources=self.sources,
                 dataset_mode=dataset_mode,
-                source_status="error" if last_run.status is SourceRunStatus.FAILED else "unknown",
-                warning="The latest live acquisition is not a successful candidate snapshot.",
-                retrieved_at=latest_artifact.retrieved_at,
+                source_status="error",
+                warning="The live candidate store could not complete the request.",
+                retrieved_at=last_run.retrieved_at,
+                record_count=last_run.records_fetched,
+            )
+        if latest_artifact is None or not observations:
+            return _empty_page(
+                sources=self.sources,
+                dataset_mode=dataset_mode,
+                source_status="unknown",
+                warning="The complete cohort has no publishable parcel observations.",
+                retrieved_at=last_run.retrieved_at,
                 record_count=last_run.records_fetched,
             )
         freshness = self.sources.freshness(LIVE_SOURCE_ID, last_run)
-        partial = last_run.partial or last_run.status is SourceRunStatus.PARTIAL
+        failed_refresh = bool(
+            latest_attempt is not None
+            and latest_attempt.run_profile is SourceRunProfile.COHORT
+            and latest_attempt.id != last_run.id
+            and not latest_attempt.is_complete_cohort
+        )
         status = (
-            "partial"
-            if partial
+            "stale" if failed_refresh or freshness.status is FreshnessStatus.STALE else "current"
+        )
+        source_status = (
+            "error"
+            if failed_refresh
             else "stale"
             if freshness.status is FreshnessStatus.STALE
             else "current"
         )
+        retrieved_at = last_run.retrieved_at or latest_artifact.retrieved_at
         has_more = len(observations) > limit
         visible = observations[:limit]
         items = tuple(
-            _project_candidate(observation, rank=offset + index + 1)
+            _project_candidate(
+                observation,
+                rank=offset + index + 1,
+                retrieved_at=retrieved_at,
+            )
             for index, observation in enumerate(visible)
         )
         source = self.sources.get(LIVE_SOURCE_ID)
@@ -155,21 +188,26 @@ class LiveCandidateRepository:
             total=total,
             dataset_mode="live",
             dataset_status=status,
-            retrieved_at=latest_artifact.retrieved_at,
+            retrieved_at=retrieved_at,
             published_at=None,
             stale_after=freshness.stale_after,
-            partial=partial,
+            partial=False,
             sources=(
                 CandidateSourceSummary(
                     id=source.id,
                     name=source.name,
-                    status=("stale" if freshness.status is FreshnessStatus.STALE else "current"),
-                    retrieved_at=latest_artifact.retrieved_at,
+                    status=source_status,
+                    retrieved_at=retrieved_at,
                     record_count=last_run.records_fetched,
                     detail=source.use_limitation,
                 ),
             ),
             warnings=(
+                *(
+                    ("The latest cohort refresh failed; this is the last complete snapshot.",)
+                    if failed_refresh
+                    else ()
+                ),
                 source.use_limitation,
                 "Assessor values are observations, not valuations, offers, or underwriting.",
                 "Opportunity Zone membership is unverified pending a versioned spatial join.",
@@ -183,16 +221,18 @@ class LiveCandidateRepository:
             raise CandidateReadUnavailableError("The live candidate store is unavailable.")
         # Detail lookups remain bounded for this screening slice.
         try:
-            last_run = self.acquisition.latest_run(LIVE_SOURCE_ID)
-            if last_run is None or last_run.status not in {
-                SourceRunStatus.SUCCEEDED,
-                SourceRunStatus.SUCCEEDED_UNCHANGED,
-                SourceRunStatus.PARTIAL,
-            }:
+            last_run = self.acquisition.latest_complete_run(
+                LIVE_SOURCE_ID, run_profile=SourceRunProfile.COHORT
+            )
+            if last_run is None:
                 raise CandidateReadUnavailableError(
-                    "No successful live candidate projection is available."
+                    "No complete approved cohort projection is available."
                 )
-            observations = self.acquisition.list_latest_observations(limit=10_000)
+            observations = self.acquisition.list_latest_observations(
+                limit=10_000,
+                artifact_ids=last_run.artifact_ids,
+                cities=TRAVIS_TCAD_AUTHORIZED_CITIES,
+            )
         except CandidateReadUnavailableError:
             raise
         except sa.exc.SQLAlchemyError as error:
@@ -200,7 +240,11 @@ class LiveCandidateRepository:
                 "The live candidate store could not complete the request."
             ) from error
         for rank, observation in enumerate(observations, start=1):
-            candidate = _project_candidate(observation, rank=rank)
+            candidate = _project_candidate(
+                observation,
+                rank=rank,
+                retrieved_at=last_run.retrieved_at or observation.observed_at,
+            )
             if candidate.id == candidate_id:
                 return candidate
         return None
@@ -213,6 +257,7 @@ def _project_candidate(
     observation: NormalizedParcelObservation,
     *,
     rank: int,
+    retrieved_at: datetime,
 ) -> CandidateReadModel:
     acreage = observation.tcad_acres or observation.gis_acres or 0.01
     display_name = observation.situs_address or f"TCAD parcel {observation.local_parcel_id}"
@@ -271,13 +316,13 @@ def _project_candidate(
             unresolved_conflict_count=0,
             freshness="current",
         ),
-        as_of=observation.observed_at,
+        as_of=retrieved_at,
         screening_only=True,
         source_observation=SourceObservation(
             source_id=observation.source_id,
             source_record_id=observation.source_record_id,
             artifact_sha256=observation.artifact_sha256,
-            retrieved_at=observation.observed_at,
+            retrieved_at=retrieved_at,
             fields=SourceObservationFields(
                 market_value_cents=observation.market_value_cents,
                 appraised_value_cents=observation.appraised_value_cents,

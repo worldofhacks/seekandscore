@@ -15,9 +15,18 @@ from seekandscore.acquisition.adapters.travis_tcad import (
     SourceSchemaError,
     TravisTcadArcGisAdapter,
 )
-from seekandscore.acquisition.models import RawArtifact, SourceRun, SourceRunStatus
+from seekandscore.acquisition.models import (
+    AcquisitionCompletenessPolicy,
+    RawArtifact,
+    SourceRun,
+    SourceRunStatus,
+)
 from seekandscore.acquisition.repository import AcquisitionRepository
-from seekandscore.acquisition.store import ArtifactCollisionError, ArtifactStore
+from seekandscore.acquisition.store import (
+    ArtifactCollisionError,
+    ArtifactStore,
+    ArtifactStoreError,
+)
 from seekandscore.registry.sources import TRAVIS_TCAD_ACQUISITION_APPROVAL_ID
 
 ARTIFACT_NAMESPACE = UUID("86066bca-12b7-4e7c-adc8-bc57ce7bb2b9")
@@ -27,6 +36,10 @@ Sleeper = Callable[[float], None]
 
 class IngestionDisabledError(PermissionError):
     """The environment has not passed the external-ingestion activation gate."""
+
+
+class IncompleteCohortError(RuntimeError):
+    """The provider could not produce the complete approved cohort in one run."""
 
 
 class AcquisitionService:
@@ -83,6 +96,7 @@ class AcquisitionService:
             started_at=started_at,
             adapter_version=self.adapter.descriptor.adapter_version,
             parser_version=self.adapter.descriptor.parser_version,
+            run_profile=self.adapter.query.run_profile,
             configuration_hash=config_hash,
             activation_id=activation_id,
         )
@@ -91,9 +105,18 @@ class AcquisitionService:
         fetched = 0
         created = 0
         quarantined = 0
+        retrieved_at: datetime | None = None
 
         try:
             source_count = self._fetch_count()
+            require_complete = (
+                self.adapter.query.completeness_policy
+                is AcquisitionCompletenessPolicy.REQUIRE_COMPLETE
+            )
+            if require_complete and source_count > self.adapter.query.max_records:
+                raise IncompleteCohortError(
+                    "approved cohort exceeds INGESTION_MAX_RECORDS; no page was acquired"
+                )
             target_count = min(source_count, self.adapter.query.max_records)
             count_was_capped = source_count > self.adapter.query.max_records
             seen_source_record_ids: set[str] = set()
@@ -111,11 +134,12 @@ class AcquisitionService:
                     headers=headers,
                 )
                 response.raise_for_status()
+                retrieved_at = self.clock()
                 artifact = self._persist_artifact(
                     content=response.content,
                     params=params,
                     response_etag=response.headers.get("ETag"),
-                    retrieved_at=self.clock(),
+                    retrieved_at=retrieved_at,
                 )
                 artifacts.append(artifact.id)
                 observations, bad_records, _exceeded = self.adapter.parse_page(
@@ -146,6 +170,21 @@ class AcquisitionService:
                 if page_record_count < requested_count:
                     break
 
+            if require_complete:
+                if quarantined:
+                    raise IncompleteCohortError(
+                        "approved cohort contains quarantined records and cannot be published"
+                    )
+                if fetched != source_count:
+                    raise IncompleteCohortError(
+                        "approved cohort pagination did not return the authoritative count"
+                    )
+                verified_count = self._fetch_count()
+                if verified_count != source_count:
+                    raise IncompleteCohortError(
+                        "approved cohort count changed during acquisition; retry the full run"
+                    )
+
             completed = self.clock()
             partial = count_was_capped or fetched < target_count
             final_status = SourceRunStatus.PARTIAL if partial else SourceRunStatus.SUCCEEDED
@@ -153,6 +192,7 @@ class AcquisitionService:
                 update={
                     "status": final_status,
                     "completed_at": completed,
+                    "retrieved_at": retrieved_at,
                     "records_fetched": fetched,
                     "observations_created": created,
                     "records_quarantined": quarantined,
@@ -166,13 +206,16 @@ class AcquisitionService:
             httpx.HTTPError,
             SourceSchemaError,
             ArcGisErrorResponse,
+            IncompleteCohortError,
             ArtifactCollisionError,
+            ArtifactStoreError,
             OSError,
         ) as error:
             failed = run.model_copy(
                 update={
                     "status": SourceRunStatus.FAILED,
                     "completed_at": self.clock(),
+                    "retrieved_at": retrieved_at,
                     "records_fetched": fetched,
                     "observations_created": created,
                     "records_quarantined": quarantined,
@@ -286,6 +329,8 @@ def _configuration_hash(adapter: TravisTcadArcGisAdapter) -> str:
             "order": adapter.query.order_by,
             "page_size": adapter.query.page_size,
             "max_records": adapter.query.max_records,
+            "run_profile": adapter.query.run_profile,
+            "completeness_policy": adapter.query.completeness_policy,
         },
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

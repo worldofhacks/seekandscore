@@ -12,6 +12,7 @@ DATASET_MODE=live
 INGESTION_ENABLED=true
 INGESTION_ACTIVATION_ID=<reviewed record id>
 INGESTION_SOURCE_ID=travis_tcad_parcels
+INGESTION_RUN_PROFILE=proof or cohort
 approved source-rights record
 durable raw-artifact storage
 LIVE_SOURCE_DISPLAY_ENABLED=true only for an approved source descriptor
@@ -26,7 +27,7 @@ python -m seekandscore.ingestion run --source travis_tcad_parcels
 
 `INGESTION_CONFIG_PATH` records the intended profile but is not dynamically consumed in v1. The adapter's endpoint, output fields, base predicate, and ordering are compiled and reviewed; this prevents a YAML-only change from broadening acquisition.
 
-The initial default is deliberately only 250 records. It proves acquisition, artifact persistence, parsing, and database idempotency; it is not a complete Travis County snapshot. After that proof, the first complete staging cohort is the official service's 953 matching `DEL VALLE` and `MANOR` records (observed August 13, 2026), bounded at 1,000 records in four 250-record pages. This is an airport/east-growth research cohort, not full Travis coverage.
+The initial `proof` profile is deliberately only two records. It proves acquisition, artifact persistence, parsing, and database idempotency and is recorded as an intentional partial run; it is never eligible for display. After that proof and replay, the `cohort` profile acquires the official service's 953 matching `DEL VALLE` and `MANOR` records (observed August 13, 2026), bounded at 1,000 records in four 250-record pages and requiring a stable complete count. This is an airport/east-growth research cohort, not full Travis coverage.
 
 ## Authoritative source register
 
@@ -53,19 +54,29 @@ Federal works are generally not copyrightable under 17 U.S.C. §105, but agency 
 
 ## Bounded Travis query contract
 
-The server advertises a maximum of 1,000 records. Repository defaults are stricter:
+The server advertises a maximum of 1,000 records per response. Repository defaults select the private two-record proof:
 
 ```text
-INGESTION_PAGE_SIZE=250             # hard maximum 1,000
-INGESTION_MAX_RECORDS=250           # hard maximum 10,000 per execution
+INGESTION_RUN_PROFILE=proof
+INGESTION_PAGE_SIZE=2
+INGESTION_MAX_RECORDS=2
 INGESTION_WHERE=PROP_ID IS NOT NULL AND tcad_acres >= 1
 INGESTION_ORDER_BY=OBJECTID ASC
-INGESTION_CITIES=                   # optional allowlisted AUSTIN,MANOR,DEL VALLE
+INGESTION_CITIES=DEL VALLE,MANOR
 INGESTION_MIN_REQUEST_INTERVAL_SECONDS=1
 INGESTION_MAX_RETRIES=3             # hard maximum 5
 ```
 
-For the reviewed staging cohort, set `INGESTION_CITIES=DEL VALLE,MANOR` and `INGESTION_MAX_RECORDS=1000`. Keep the base predicate and order exactly as shown. Record the upstream `returnCountOnly` result before each run and stop if it exceeds the cap rather than silently truncating the cohort.
+For the reviewed complete staging cohort, use this exact profile:
+
+```text
+INGESTION_RUN_PROFILE=cohort
+INGESTION_PAGE_SIZE=250
+INGESTION_MAX_RECORDS=1000
+INGESTION_CITIES=DEL VALLE,MANOR
+```
+
+When ingestion is enabled, the runtime rejects any other profile, bounds, or city set. Keep the base predicate and order exactly as shown. The cohort profile performs an upstream count preflight before fetching any page, fails if the result exceeds 1,000, and rechecks the count after acquisition to reject a changing or incomplete snapshot.
 
 The adapter must paginate deterministically by `OBJECTID`, request only its fixed field list, enforce a single concurrent request, and reject arbitrary `where`, `orderByFields`, or `outFields` input. The first feed explicitly excludes `py_owner_id`, `py_owner_name`, and `py_address`; it is not an owner/contact acquisition feed. On `429` or transient `5xx`, honor `Retry-After`, use capped exponential backoff, and fail the run after the bounded retry count. A partial fetch is never promoted as a complete snapshot.
 
@@ -101,7 +112,7 @@ Do not copy these credentials to web or browser-visible variables. Railway uses 
 1. Install locked dependencies, copy `.env.example` to an untracked `.env`, and start infrastructure with `make infra-up`.
 2. Run `make ingestion-check`; it must report acquisition disabled.
 3. Review and record the source rights decision and create a unique activation ID.
-4. For an approved bounded staging-style local test, export the four reviewed gate values and run `make ingestion-run-local`. The target passes `APP_ENV`, `DATASET_MODE`, `INGESTION_ENABLED`, and `INGESTION_ACTIVATION_ID` only from the caller; absent or invalid values fail closed.
+4. For an approved bounded staging-style local test, retain the exact `proof` profile from `.env.example`, export the four reviewed gate values, and run `make ingestion-run-local`. The target passes `APP_ENV`, `DATASET_MODE`, `INGESTION_ENABLED`, and `INGESTION_ACTIVATION_ID` only from the caller; absent or invalid values fail closed.
 5. Verify a raw object/checksum exists before normalized records, rerun the same slice, and confirm idempotency.
 6. Set `INGESTION_ENABLED=false` immediately after the proof.
 
@@ -113,13 +124,13 @@ Do not install a local recurring job until the three-run idempotency test and ki
 2. Use the pinned `postgis/postgis:17-3.5` single-node service with one persistent volume mounted at `/var/lib/postgresql/data`. Set `PGDATA=/var/lib/postgresql/data/pgdata`; writing directly to the mounted root fails because Railway initializes it with `lost+found`. Keep it private, configure Railway volume backups, create an external logical backup, and accept the single-node limitation.
 3. Deploy API from `/infra/railway/api.example.toml` and web from `/infra/railway/web.example.toml`. API is the only migration owner. Reference the private database as `DATABASE_URL=${{PostGIS.DATABASE_URL}}`; never add a public database TCP proxy for application traffic.
 4. Deploy the manual acquisition proof from `/infra/railway/ingestion-travis.example.toml`. Give it PostGIS and `raw-artifacts` references, but no public domain, Redis, outreach, alert-provider, auth, or web secrets. This template intentionally has no cron.
-5. First deploy it with `APP_ENV=staging`, `DATASET_MODE=live`, `INGESTION_ENABLED=false`, `INGESTION_SOURCE_ID=travis_tcad_parcels`, page/max records `250`, and no activation ID. Confirm the command fails closed without a network acquisition.
+5. First deploy it with `APP_ENV=staging`, `DATASET_MODE=live`, `INGESTION_ENABLED=false`, `INGESTION_SOURCE_ID=travis_tcad_parcels`, `INGESTION_RUN_PROFILE=proof`, exact page/max records `2`/`2`, exact cities `DEL VALLE,MANOR`, and no activation ID. Confirm the command fails closed without a network acquisition.
 6. Run database migration from the API pre-deploy owner and verify API `/readyz` before any source run.
-7. Reference the recorded rights/activation decision, then set `INGESTION_ENABLED=true` and the activation ID only on the acquisition service. First execute the default 250-record proof manually.
-8. After that proof passes, set `INGESTION_CITIES=DEL VALLE,MANOR` and `INGESTION_MAX_RECORDS=1000`; verify the preflight count is at most 1,000, then run the complete 953-record airport/east-growth cohort.
-9. Verify raw object durability/checksum, source-run row counts, exactly bounded request count, parser outcome, and a duplicate run. Exercise the kill switch and inspect logs for secret/query leakage.
-10. Only after both runs pass, change the service config path to `/infra/railway/ingestion-travis.cron.example.toml`, which enables `17 9 2 * *`. Railway cron is UTC, may start late, and skips a new run while the previous process remains active; the process must exit and close connections.
-11. Keep public display off during ingestion validation. After the complete cohort and replay checks pass, enable display with `LIVE_SOURCE_DISPLAY_APPROVAL_ID=SRC-TCAD-TNR-BOUNDED-DISPLAY-20260813-V1`. Keep export, redistribution, outreach, and provider alert delivery off. Enabling acquisition alone never grants those capabilities.
+7. Reference the recorded private-acquisition decision, then set `INGESTION_ENABLED=true` and the exact reviewed activation ID only on the acquisition service. Execute the two-record `proof` profile and replay it once. Require two fetched records, no quarantine, a content-addressed private raw artifact, and no duplicate normalized rows on replay; then disable ingestion and clear the activation ID.
+8. Immediately recheck the exact official `returnCountOnly` query. Proceed only when it is exactly 953. Set `INGESTION_RUN_PROFILE=cohort`, page/max records `250`/`1000`, and exact cities `DEL VALLE,MANOR`; run the complete cohort and replay it once. Both runs must be complete, stable at 953, and free of quarantined rows. Disable ingestion and clear the activation ID after validation.
+9. Verify raw object durability/checksums, source-run profile and status, artifact lineage, exactly bounded request count, parser outcome, and replay idempotency. Exercise the kill switch and inspect logs for secret/query leakage.
+10. Only after both proof and cohort replays pass, change the service config path to `/infra/railway/ingestion-travis.cron.example.toml`, retain `INGESTION_RUN_PROFILE=cohort`, page/max `250`/`1000`, exact cities, and the reviewed acquisition activation ID, then enable the monthly `17 9 2 * *` schedule. Railway cron is UTC, may start late, and skips a new run while the previous process remains active; the process must exit and close connections.
+11. Keep live display off during ingestion validation. After the complete cohort and replay checks pass, protect the public web origin with the required single-operator access gate, keep the API private, and enable reference display with `LIVE_SOURCE_DISPLAY_APPROVAL_ID=SRC-TCAD-TNR-BOUNDED-DISPLAY-20260813-V1`. Keep export, redistribution, outreach, and provider alert delivery off. Enabling acquisition alone never grants those capabilities.
 
 ## Incident stop and replay
 

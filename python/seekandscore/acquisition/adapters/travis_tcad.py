@@ -10,9 +10,11 @@ from uuid import UUID, uuid5
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from seekandscore.acquisition.models import (
+    AcquisitionCompletenessPolicy,
     NormalizedParcelObservation,
     QuarantinedRecord,
     RawArtifact,
+    SourceRunProfile,
 )
 from seekandscore.registry.sources import TRAVIS_TCAD_SOURCE
 
@@ -88,6 +90,10 @@ class TravisTcadQuery:
     where: str = "PROP_ID IS NOT NULL AND tcad_acres >= 1"
     order_by: str = "OBJECTID ASC"
     cities: tuple[str, ...] = ()
+    run_profile: SourceRunProfile = SourceRunProfile.PROOF
+    completeness_policy: AcquisitionCompletenessPolicy = (
+        AcquisitionCompletenessPolicy.ALLOW_BOUNDED_PARTIAL
+    )
 
     def __post_init__(self) -> None:
         if not 1 <= self.page_size <= 1000:

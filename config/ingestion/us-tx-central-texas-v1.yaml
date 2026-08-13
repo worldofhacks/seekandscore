@@ -11,7 +11,7 @@ activation:
   required_dataset_mode: live
   required_runtime_flags:
     INGESTION_ENABLED: "true"
-    INGESTION_ACTIVATION_ID: non_empty_review_record
+    INGESTION_ACTIVATION_ID: SRC-TCAD-TNR-REFERENCE-ACQUIRE-20260813-V1
   required_reviews:
     - source_rights_approved
     - sample_schema_reviewed
@@ -47,15 +47,27 @@ sources:
     publication_cadence: monthly
     intended_schedule:
       cron_utc: "17 9 2 * *"
-      state: disabled_until_activation
+      run_profile: cohort
+      state: attach_only_after_proof_and_cohort_replays
+    proof_cohort:
+      purpose: parser_storage_and_replay_validation
+      run_profile: proof
+      cities: [DEL VALLE, MANOR]
+      page_size: 2
+      max_records: 2
+      expected_status: partial
+      required_runs: 2
+      state: manual_operator_activation
     staging_cohort:
       purpose: airport_and_east_growth_research
+      run_profile: cohort
       cities: [DEL VALLE, MANOR]
       observed_matching_records: 953
       observed_at: "2026-08-13"
       page_size: 250
       max_records: 1000
-      state: disabled_until_activation
+      completeness_policy: require_complete
+      state: manual_operator_activation_after_proof_replay
     endpoints:
       service: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer
       layer: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0
@@ -75,9 +87,9 @@ sources:
         - The first feed is parcel/site intelligence, not an owner-contact acquisition feed.
         - Outreach identity and contact sourcing require their own reviewed source and purpose.
     bounded_fetch:
-      default_page_size: 250
+      default_page_size: 2
       maximum_page_size: 1000
-      default_max_records_per_run: 250
+      default_max_records_per_run: 2
       hard_max_records_per_run: 10000
       max_concurrency: 1
       request_timeout_seconds: 30
@@ -89,7 +101,7 @@ sources:
       honor_retry_after: true
       default_where: PROP_ID IS NOT NULL AND tcad_acres >= 1
       default_order_by: OBJECTID ASC
-      allowed_city_filters: [AUSTIN, MANOR, DEL VALLE]
+      allowed_city_filters: [DEL VALLE, MANOR]
       arbitrary_out_fields_allowed: false
       arbitrary_order_by_allowed: false
     rights:
@@ -108,7 +120,7 @@ sources:
       approved_scope:
         - bounded automated queries against the County TNR service
         - private immutable raw retention
-        - public reference display of the reviewed non-owner field allowlist
+        - private attributed reference display of the reviewed non-owner field allowlist
       notes:
         - The exact service ItemInfo identifies TCAD, says County TNR assembles the layer monthly, and states reference/informational limitations without prohibiting service queries or display.
         - The separate TCAD PDF map-download page prohibits data mining; this approval does not scrape that page or its PDFs.

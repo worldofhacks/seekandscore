@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 
 from seekandscore.acquisition.store import (
     ArtifactCollisionError,
+    ArtifactStoreError,
     FileArtifactStore,
     S3ArtifactStore,
 )
@@ -37,6 +38,14 @@ class FakeS3Client:
             raise client_error("PreconditionFailed", "PutObject")
         self.exists = True
         return {}
+
+
+class FailedRaceVerificationClient(FakeS3Client):
+    def head_object(self, **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        if not self.exists:
+            raise client_error("404", "HeadObject")
+        raise client_error("AccessDenied", "HeadObject")
 
 
 def test_file_store_is_immutable_and_idempotent(tmp_path: Path) -> None:
@@ -115,3 +124,47 @@ def test_s3_store_rejects_concurrent_different_content() -> None:
             media_type="application/json",
             metadata={"sha256": "abc"},
         )
+
+
+def test_s3_store_wraps_client_error_during_race_verification() -> None:
+    store = S3ArtifactStore(
+        bucket="bucket",
+        endpoint_url="https://example.invalid",
+        region_name="auto",
+        access_key_id="test",
+        secret_access_key="test",
+        client=FailedRaceVerificationClient(concurrent=True),
+    )
+
+    with pytest.raises(ArtifactStoreError, match="collision verification failed"):
+        store.put_if_absent(
+            key="raw/source/ab/abc.json",
+            content=b"payload",
+            media_type="application/json",
+            metadata={"sha256": "abc"},
+        )
+
+
+def test_s3_store_wraps_provider_errors_without_exposing_details() -> None:
+    client = FakeS3Client()
+    client.head_object = lambda **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        client_error("AccessDenied", "HeadObject")
+    )
+    store = S3ArtifactStore(
+        bucket="bucket",
+        endpoint_url="https://example.invalid",
+        region_name="auto",
+        access_key_id="test",
+        secret_access_key="test",
+        client=client,
+    )
+
+    with pytest.raises(ArtifactStoreError, match="object storage HEAD failed") as caught:
+        store.put_if_absent(
+            key="raw/source/ab/abc.json",
+            content=b"payload",
+            media_type="application/json",
+            metadata={"sha256": "abc"},
+        )
+
+    assert "AccessDenied" not in str(caught.value)

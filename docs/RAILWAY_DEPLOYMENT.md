@@ -46,7 +46,6 @@ Do not self-manage Patroni/etcd/PostGIS on Railway for the first release; the op
 ```mermaid
 flowchart TB
   Internet --> Web["web<br/>Next.js"]
-  Internet --> API["api<br/>FastAPI"]
   Web --> API
 
   API --> Redis["Redis<br/>queue/cache"]
@@ -72,7 +71,7 @@ flowchart TB
 | Service | Railway primitive | Public domain | Persistent volume | MVP replicas | Scale trigger |
 |---|---|---:|---:|---:|---|
 | `web` | persistent service | yes | no | 1 | 2+ at production launch or measured saturation |
-| `api` | persistent service | yes | no | 1 | 2+ for availability/load; remain stateless |
+| `api` | private persistent service | no | no | 1 | 2+ for availability/load; remain stateless |
 | `worker-discovery` | persistent worker | no | no | 1 | source backlog/latency or rate-isolation needs |
 | `worker-enrichment` | persistent worker | no | no | 1 | CPU/GIS/document backlog |
 | `worker-engagement` | private persistent worker | no | no | 0 until M5 | approved-send/callback/upload backlog or provider isolation |
@@ -167,14 +166,14 @@ With ingestion disabled and no source credentials, this produces an honest empty
 
 ## 7. Networking
 
-Only `web` and `api` receive public domains. PostGIS, Redis, workers, scheduler, and PgBouncer remain private.
+Only `web` receives a public domain. The API, PostGIS, Redis, workers, scheduler, and PgBouncer remain private. The web server calls the API through `API_BASE_URL` on Railway private networking; browser code must not receive or call a `*.railway.internal` origin.
 
 Railway [private networking](https://docs.railway.com/networking/private-networking) supplies per-environment internal DNS over encrypted WireGuard. Services use names such as `postgis.railway.internal` and `redis.railway.internal`, ideally through reference variables rather than hardcoded hostnames.
 
 Requirements:
 
 - Bind application servers to Railway's injected `PORT` and an IPv6-compatible address (`::`) when using its dual-stack private network.
-- Keep client-side browser code on the public API URL; browsers cannot reach `*.railway.internal`.
+- Keep live API access server-side through the private origin. Browsers cannot reach `*.railway.internal`, and assigning the API a public domain would bypass the web access gate.
 - Use application connection retries/backoff. GitHub-triggered monorepo service deploys are independent and there is no Docker Compose `depends_on` guarantee.
 - Do not expose the database TCP proxy in production unless an approved operational need exists.
 - If a source requires IP allowlisting, evaluate Railway Pro static outbound IPv4 and document that capability in the adapter descriptor.
@@ -198,6 +197,9 @@ LOG_LEVEL
 PUBLIC_APP_URL
 API_BASE_URL
 ALLOWED_ORIGINS
+WEB_PRIVATE_ACCESS_ENABLED
+WEB_PRIVATE_ACCESS_USERNAME
+WEB_PRIVATE_ACCESS_PASSWORD
 DATABASE_URL
 REDIS_URL
 OBJECT_STORAGE_ENDPOINT
@@ -210,6 +212,19 @@ AUTH_SECRET / OIDC settings
 OTEL_EXPORTER_OTLP_ENDPOINT
 SENTRY_DSN
 ```
+
+The web service is private-by-default in `staging` and `production`. Set
+`WEB_PRIVATE_ACCESS_ENABLED=true`, store `WEB_PRIVATE_ACCESS_USERNAME` and a
+generated high-entropy `WEB_PRIVATE_ACCESS_PASSWORD` of at least 24 characters
+as sealed, server-only Railway variables, and never use the `NEXT_PUBLIC_`
+prefix for either credential. Startup refuses missing or blank values. The request proxy protects
+all pages, APIs, RSC requests, and assets with HTTP Basic authentication; only
+the data-free `/api/health` Railway health check remains unauthenticated.
+
+Basic authentication protects the web origin only. Do not expose a separate
+public API domain when live display is enabled. Route the web service to the API
+over Railway private networking with `API_BASE_URL`, or add an equivalent API
+authentication boundary before assigning an API public domain.
 
 ### Source variables
 
@@ -367,7 +382,7 @@ Railway provides container logs and infrastructure metrics, but application/sour
 
 Minimum production alerts:
 
-- public API unavailable or error/latency threshold exceeded;
+- private API unavailable to the web service or error/latency threshold exceeded;
 - source freshness SLA missed;
 - repeated source authentication/rate-limit/schema failure;
 - queue oldest-job age/depth exceeds threshold;

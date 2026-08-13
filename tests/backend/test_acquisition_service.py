@@ -9,7 +9,11 @@ import httpx
 import pytest
 
 from seekandscore.acquisition.adapters import TravisTcadArcGisAdapter, TravisTcadQuery
-from seekandscore.acquisition.models import SourceRunStatus
+from seekandscore.acquisition.models import (
+    AcquisitionCompletenessPolicy,
+    SourceRunProfile,
+    SourceRunStatus,
+)
 from seekandscore.acquisition.repository import MemoryAcquisitionRepository
 from seekandscore.acquisition.service import AcquisitionService, IngestionDisabledError
 from seekandscore.acquisition.store import FileArtifactStore
@@ -23,6 +27,7 @@ def build_service(
     repository: MemoryAcquisitionRepository,
     *,
     count: int = 2,
+    count_responses: list[int] | None = None,
     page_content: bytes | None = None,
     max_records: int = 2,
     page_size: int | None = None,
@@ -31,6 +36,10 @@ def build_service(
     transport_failures: int = 0,
     sleeps: list[float] | None = None,
     min_request_interval_seconds: float = 0,
+    run_profile: SourceRunProfile = SourceRunProfile.PROOF,
+    completeness_policy: AcquisitionCompletenessPolicy = (
+        AcquisitionCompletenessPolicy.ALLOW_BOUNDED_PARTIAL
+    ),
 ) -> tuple[AcquisitionService, list[httpx.Request]]:
     requests: list[httpx.Request] = []
     content = page_content or FIXTURE.read_bytes()
@@ -47,7 +56,8 @@ def build_service(
             if status != 200:
                 return httpx.Response(status, headers=headers, text="retry")
         if request.url.params.get("returnCountOnly") == "true":
-            return httpx.Response(200, json={"count": count})
+            response_count = count_responses.pop(0) if count_responses else count
+            return httpx.Response(200, json={"count": response_count})
         offset = int(request.url.params.get("resultOffset", "0"))
         return httpx.Response(
             200,
@@ -58,7 +68,13 @@ def build_service(
     client = httpx.Client(transport=httpx.MockTransport(handler))
     service = AcquisitionService(
         adapter=TravisTcadArcGisAdapter(
-            TravisTcadQuery(page_size=page_size or max_records, max_records=max_records)
+            TravisTcadQuery(
+                page_size=page_size or max_records,
+                max_records=max_records,
+                cities=("DEL VALLE", "MANOR"),
+                run_profile=run_profile,
+                completeness_policy=completeness_policy,
+            )
         ),
         repository=repository,
         artifact_store=FileArtifactStore(tmp_path),
@@ -105,6 +121,74 @@ def test_count_above_cap_marks_run_partial(tmp_path: Path) -> None:
     assert run.status is SourceRunStatus.PARTIAL
     assert run.partial is True
     assert run.records_fetched == 2
+
+
+def test_complete_cohort_fails_before_page_or_artifact_when_count_exceeds_cap(
+    tmp_path: Path,
+) -> None:
+    repository = MemoryAcquisitionRepository()
+    service, requests = build_service(
+        tmp_path,
+        repository,
+        count=1001,
+        max_records=1000,
+        page_size=250,
+        run_profile=SourceRunProfile.COHORT,
+        completeness_policy=AcquisitionCompletenessPolicy.REQUIRE_COMPLETE,
+    )
+
+    run = execute(service)
+
+    assert run.status is SourceRunStatus.FAILED
+    assert run.error_code == "IncompleteCohortError"
+    assert run.records_fetched == 0
+    assert run.artifact_ids == ()
+    assert len(requests) == 1
+    assert not repository.artifacts
+
+
+def test_complete_cohort_rechecks_count_after_all_pages(tmp_path: Path) -> None:
+    repository = MemoryAcquisitionRepository()
+    service, requests = build_service(
+        tmp_path,
+        repository,
+        count=2,
+        max_records=1000,
+        page_size=250,
+        run_profile=SourceRunProfile.COHORT,
+        completeness_policy=AcquisitionCompletenessPolicy.REQUIRE_COMPLETE,
+    )
+
+    run = execute(service)
+
+    assert run.status is SourceRunStatus.SUCCEEDED
+    assert run.run_profile is SourceRunProfile.COHORT
+    assert run.partial is False
+    assert [request.url.params.get("returnCountOnly") for request in requests] == [
+        "true",
+        None,
+        "true",
+    ]
+
+
+def test_complete_cohort_fails_if_count_changes_during_acquisition(tmp_path: Path) -> None:
+    repository = MemoryAcquisitionRepository()
+    service, _ = build_service(
+        tmp_path,
+        repository,
+        count_responses=[2, 3],
+        max_records=1000,
+        page_size=250,
+        run_profile=SourceRunProfile.COHORT,
+        completeness_policy=AcquisitionCompletenessPolicy.REQUIRE_COMPLETE,
+    )
+
+    run = execute(service)
+
+    assert run.status is SourceRunStatus.FAILED
+    assert run.error_code == "IncompleteCohortError"
+    assert run.records_fetched == 2
+    assert run.partial is True
 
 
 def test_count_drives_bounded_pagination_even_when_transfer_flag_is_false(

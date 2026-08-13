@@ -6,11 +6,15 @@ from typing import Any, Protocol
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 
 class ArtifactCollisionError(RuntimeError):
     """Raised if one content-addressed key already contains different bytes."""
+
+
+class ArtifactStoreError(RuntimeError):
+    """Raised when immutable object storage cannot complete an operation."""
 
 
 class ArtifactStore(Protocol):
@@ -89,7 +93,9 @@ class S3ArtifactStore:
         except ClientError as error:
             code = str(error.response.get("Error", {}).get("Code", ""))
             if code not in {"404", "NoSuchKey", "NotFound"}:
-                raise
+                raise ArtifactStoreError("object storage HEAD failed") from error
+        except BotoCoreError as error:
+            raise ArtifactStoreError("object storage HEAD failed") from error
         else:
             existing_sha = response.get("Metadata", {}).get("sha256")
             requested_sha = metadata.get("sha256")
@@ -109,8 +115,15 @@ class S3ArtifactStore:
         except ClientError as error:
             code = str(error.response.get("Error", {}).get("Code", ""))
             if code not in {"412", "PreconditionFailed"}:
-                raise
-            response = self.client.head_object(Bucket=self.bucket, Key=key)
+                raise ArtifactStoreError("object storage immutable PUT failed") from error
+            try:
+                response = self.client.head_object(Bucket=self.bucket, Key=key)
+            except (ClientError, BotoCoreError) as verification_error:
+                raise ArtifactStoreError(
+                    "object storage collision verification failed"
+                ) from verification_error
             if response.get("Metadata", {}).get("sha256") != metadata.get("sha256"):
                 raise ArtifactCollisionError(f"immutable artifact collision at {key}") from error
+        except BotoCoreError as error:
+            raise ArtifactStoreError("object storage immutable PUT failed") from error
         return f"s3://{self.bucket}/{key}"
