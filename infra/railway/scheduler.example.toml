@@ -1,0 +1,16 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/worker.Dockerfile"
+watchPatterns = [
+  "services/worker/**",
+  "python/seekandscore/**",
+  "config/regions/**",
+  "pyproject.toml",
+  "uv.lock",
+  "infra/docker/worker.Dockerfile"
+]
+
+[deploy]
+startCommand = "python -m seekandscore.scheduler dispatch-due"
+cronSchedule = "*/15 * * * *"
+restartPolicyType = "NEVER"

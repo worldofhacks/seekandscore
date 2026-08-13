@@ -1,0 +1,124 @@
+schema_version: 1
+id: us-tx-central-texas
+name: Central Texas launch region
+version: 0.1.0
+status: development
+timezone: America/Chicago
+
+jurisdictions:
+  - id: us-tx-travis
+    country_code: US
+    state_fips: "48"
+    county_fips: "453"
+    county_name: Travis County
+  - id: us-tx-bastrop
+    country_code: US
+    state_fips: "48"
+    county_fips: "021"
+    county_name: Bastrop County
+  - id: us-tx-caldwell
+    country_code: US
+    state_fips: "48"
+    county_fips: "055"
+    county_name: Caldwell County
+
+rollout:
+  ranking_mode: shadow
+  ingestion_enabled: false
+  alert_delivery: disabled
+  activation_requires:
+    - source_rights_approved
+    - parcel_match_benchmark_passed
+    - freshness_sla_configured
+    - scoring_profile_approved
+
+scoring_profile: central-texas-v1
+
+strategies:
+  - overall
+  - buildable_land
+  - lifestyle
+  - distress
+  - airport_parking
+  - event_parking_redevelopment
+  - land_banking
+  - auction
+  - opportunity_zone_development
+
+reference_areas:
+  - id: aus_airport_corridor
+    kind: corridor
+    geometry_ref: registry://areas/us-tx-central-texas/aus-airport-corridor/v1
+  - id: bastrop_growth_corridor
+    kind: corridor
+    geometry_ref: registry://areas/us-tx-central-texas/bastrop-growth-corridor/v1
+  - id: lockhart_growth_corridor
+    kind: corridor
+    geometry_ref: registry://areas/us-tx-central-texas/lockhart-growth-corridor/v1
+  - id: q2_domain_corridor
+    kind: corridor
+    geometry_ref: registry://areas/us-tx-central-texas/q2-domain-corridor/v1
+
+sources:
+  - id: travis_assessor
+    capability: assessor_parcel
+    jurisdiction: us-tx-travis
+    adapter: null
+    policy_ref: null
+    status: planned
+    schedule: null
+  - id: bastrop_assessor
+    capability: assessor_parcel
+    jurisdiction: us-tx-bastrop
+    adapter: null
+    policy_ref: null
+    status: planned
+    schedule: null
+  - id: caldwell_assessor
+    capability: assessor_parcel
+    jurisdiction: us-tx-caldwell
+    adapter: null
+    policy_ref: null
+    status: planned
+    schedule: null
+  - id: central_texas_listings
+    capability: active_listing
+    jurisdiction: us-tx-central-texas
+    adapter: null
+    policy_ref: null
+    status: blocked_decision
+    schedule: null
+  - id: travis_tax_foreclosure
+    capability: tax_foreclosure
+    jurisdiction: us-tx-travis
+    adapter: null
+    policy_ref: null
+    status: planned
+    schedule: null
+  - id: court_manual_import
+    capability: court_case
+    jurisdiction: us-tx-central-texas
+    adapter: manual_upload_v1
+    policy_ref: null
+    status: planned
+    schedule: null
+  - id: federal_fema_flood
+    capability: flood_hazard
+    jurisdiction: US
+    adapter: null
+    policy_ref: null
+    status: planned
+    schedule: null
+  - id: federal_opportunity_zones
+    capability: opportunity_zone
+    jurisdiction: US
+    adapter: null
+    policy_ref: null
+    status: planned
+    schedule: null
+
+compliance_notes:
+  - Public visibility is not bulk-access or redistribution permission.
+  - Texas sale-price disclosure limitations affect comparable coverage.
+  - Opportunity Zone location is not a tax-qualification conclusion.
+  - Court, owner, and contact data require purpose and retention controls.

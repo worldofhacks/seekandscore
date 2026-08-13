@@ -1,0 +1,17 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/worker.Dockerfile"
+watchPatterns = [
+  "services/worker/**",
+  "python/seekandscore/**",
+  "migrations/**",
+  "pyproject.toml",
+  "uv.lock",
+  "infra/docker/worker.Dockerfile"
+]
+
+[deploy]
+startCommand = "python -m seekandscore.worker --queues acquire,parse"
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 10
+drainingSeconds = 60

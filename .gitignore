@@ -1,0 +1,42 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# JavaScript / TypeScript
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data and geospatial artifacts
+data/raw/
+data/processed/
+*.gpkg
+*.geojson
+*.shp
+*.shx
+*.dbf
+*.parquet
+*.tif
+*.tiff
+
+# Local tooling
+.DS_Store
+.idea/
+.vscode/
+*.log
+.railway/

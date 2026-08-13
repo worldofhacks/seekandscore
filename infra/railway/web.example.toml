@@ -1,0 +1,19 @@
+[build]
+builder = "RAILPACK"
+watchPatterns = [
+  "apps/web/**",
+  "packages/ui/**",
+  "packages/contracts/**",
+  "package.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml"
+]
+
+[deploy]
+startCommand = "pnpm --filter @seekandscore/web start"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 10
+overlapSeconds = 15
+drainingSeconds = 20

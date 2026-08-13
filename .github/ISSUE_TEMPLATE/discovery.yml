@@ -1,0 +1,32 @@
+name: Discovery / decision
+description: Investigate a source, product choice, risk, or architecture decision before implementation.
+title: "[Discovery]: "
+labels:
+  - "type: discovery"
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Decision or question
+      description: State the concrete uncertainty and why it blocks an outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence to gather
+      description: Include authoritative sources, representative artifacts, costs, terms, and alternatives as applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Exit criteria
+      description: What objective evidence lets this issue close?
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Data, security, and compliance notes
+      description: Do not paste credentials, owner/contact data, or restricted source records.

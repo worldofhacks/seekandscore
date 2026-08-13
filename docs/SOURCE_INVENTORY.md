@@ -1,0 +1,74 @@
+# Source inventory
+
+This is the Phase 0 control document, not permission to automate any source. A source moves to `approved` only after its access mechanism, terms, retention/display/export rights, identifiers, cadence, sample fixture, and operational owner are recorded.
+
+## Status vocabulary
+
+- `discovery`: source identified; no access/rights conclusion
+- `sampled`: representative artifact obtained and stored safely
+- `rights_review`: access/retention/display/redistribution under review
+- `approved`: adapter/manual process may be implemented for the declared use
+- `shadow`: running without user-facing ranking/alerts
+- `active`: approved for production facts/rankings
+- `suspended`: disabled because of terms, quality, schema, auth, or operational concern
+- `blocked`: missing decision, credential, contract, or supported access mechanism
+
+## Central Texas launch inventory
+
+| Jurisdiction | Capability | Candidate authority/source | MVP mechanism | Status | Primary unknown |
+|---|---|---|---|---|---|
+| Travis | assessor/parcel | Travis Central Appraisal District | official bulk/API/export preferred | discovery | bulk availability, geometry, terms |
+| Bastrop | assessor/parcel | Bastrop Central Appraisal District | official bulk/API/export preferred | discovery | fields, geometry, cadence, terms |
+| Caldwell | assessor/parcel | Caldwell County Appraisal District | official bulk/API/export preferred | discovery | fields, geometry, cadence, terms |
+| Travis | tax delinquency/foreclosure | Travis County Tax Office | official published files/pages | discovery | format/history/retention |
+| Bastrop | tax delinquency/foreclosure | county tax authority/sale authority | to determine | discovery | authority and publication method |
+| Caldwell | tax delinquency/foreclosure | county tax authority/sale authority | to determine | discovery | authority and publication method |
+| Travis | civil tax/real-estate cases | District Clerk | manual flag/import first | discovery | automation terms/access/document rights |
+| launch counties | trustee/non-tax foreclosure | County Clerk/public notices | manual-assisted first | discovery | indexing, document rights, matching |
+| launch counties | deeds/ownership | County Clerk/recorder | later phase | discovery | access cost and owner-history fields |
+| launch counties | active listings | licensed feed/provider | manual import until selected | blocked | provider, contract, price, display rights |
+| launch counties | sold comparables | licensed/public sources | manual/approved provider | blocked | Texas nondisclosure and licensing |
+| federal/local | parcel geometry | CAD/county/local GIS | official download/service | discovery | authority, vintage, completeness |
+| federal | flood | FEMA NFHL/products | official download/service | discovery | effective-layer update process |
+| federal | Opportunity Zones | IRS/Treasury + Census geometry | official files | discovery | 2027 final publication lifecycle |
+| local | zoning/city/ETJ | municipal/county GIS/planning | later/where authoritative | discovery | semantics, completeness, updates |
+| local/state/federal | wildfire/wetlands/elevation | official agencies | later phase | discovery | layer selection and screening limits |
+| local | roads/access/utilities | transport/local utility/planning | evidence signals only | discovery | legal-access versus physical-road distinction |
+
+## Required source record
+
+Create one source-policy record containing:
+
+```text
+source name and authority
+jurisdictions/capabilities
+official URLs and support contact
+access mechanism and authentication
+terms/license URLs and accepted-at timestamp
+retention, display, export and redistribution flags
+required attribution
+personal/restricted data classification
+upstream identifiers and geographic vintage
+publication and expected refresh cadence
+rate/concurrency limits
+sample artifact checksum/object URI
+adapter/parser/config versions
+source owner and incident path
+kill switch and replay procedure
+```
+
+## Adapter readiness checklist
+
+- [ ] Official/supported access mechanism selected
+- [ ] Terms and data rights reviewed for the exact use
+- [ ] Representative artifacts cover normal and edge cases
+- [ ] Stable upstream record identity established
+- [ ] Geographic/identifier vintage recorded
+- [ ] Parser runs offline and deterministically
+- [ ] Three-run idempotency passes
+- [ ] Schema drift quarantines instead of corrupting facts
+- [ ] Rate limiting, retries, and last-good cursor tested
+- [ ] Freshness SLA and health metrics configured
+- [ ] Fixtures contain no credentials or unnecessary personal/licensed data
+- [ ] Shadow output reviewed against source
+- [ ] Production activation approved

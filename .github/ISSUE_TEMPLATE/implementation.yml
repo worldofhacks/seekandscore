@@ -1,0 +1,43 @@
+name: Implementation
+description: Deliver a scoped, testable product/data/platform outcome.
+title: "[Implementation]: "
+labels:
+  - "type: feature"
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: User or system outcome
+      description: Describe the observable result, not only the code to write.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and boundaries
+      description: Include dependencies and explicit non-goals.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use objective, testable checks including failure behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data/provenance/idempotency
+      description: Describe observations, lineage, replay, schema, and migration impact where applicable.
+  - type: textarea
+    id: operations
+    attributes:
+      label: Security and operations
+      description: Cover authorization, rights, sensitive data, metrics, alerts, rollback, and runbooks.
+  - type: textarea
+    id: testplan
+    attributes:
+      label: Test plan
+    validations:
+      required: true

@@ -1,0 +1,113 @@
+schema_version: 1
+id: central-texas-v1
+version: 0.1.0-draft
+status: draft
+effective_from: null
+
+scale:
+  minimum: 0
+  maximum: 100
+  rounding_decimals: 2
+
+eligibility:
+  overall_top_25:
+    required:
+      - canonical_parcel_resolved
+      - location_resolved
+      - owner_or_owner_unknown_reason_recorded
+      - basic_value_evidence_available
+      - duplicate_check_passed
+    on_failure: research_queue
+
+overall_positive_components:
+  investment_quality: 0.25
+  discount_potential: 0.20
+  location_growth: 0.15
+  development_optionality: 0.15
+  motivation_distress: 0.10
+  liquidity: 0.05
+  lifestyle_value: 0.05
+  information_confidence: 0.05
+
+risk_deductions:
+  flood:
+    maximum: 20
+    unknown_behavior: confidence_penalty
+  title_complexity:
+    maximum: 15
+    unknown_behavior: flag_and_confidence_penalty
+  access:
+    maximum: 20
+    unknown_behavior: flag_and_confidence_penalty
+  utility_uncertainty:
+    maximum: 10
+    unknown_behavior: confidence_penalty
+  unusable_geometry:
+    maximum: 10
+    unknown_behavior: confidence_penalty
+  restrictive_zoning:
+    maximum: 20
+    unknown_behavior: flag_and_confidence_penalty
+  wildfire:
+    maximum: 10
+    unknown_behavior: confidence_penalty
+  parcel_identity:
+    maximum: 15
+    unknown_behavior: research_queue
+  aggregate_cap: 60
+
+confidence_adjustment:
+  formula: opportunity_score * (0.75 + 0.25 * confidence)
+  confidence_range: [0.0, 1.0]
+  unknown_is_zero: false
+
+rank_stability:
+  formula_without_material_event: 0.85 * rank_adjusted_score + 0.15 * previous_display_score
+  material_event_bypasses_smoothing: true
+  material_events:
+    - foreclosure_filed
+    - foreclosure_dismissed
+    - trustee_sale_scheduled
+    - auction_added
+    - auction_removed
+    - property_sold
+    - tax_delinquency_resolved
+    - zoning_changed
+    - major_risk_discovered
+    - price_change_over_threshold
+  thresholds:
+    price_change_ratio: 0.10
+
+top_25_composition_preferences:
+  hard_quotas: false
+  minimum_preferences:
+    buildable_or_lifestyle: 5
+    distressed_or_off_market: 5
+    parking_or_commercial: 3
+  exceptional_candidate_override: true
+
+strategy_models:
+  buildable_land:
+    required_inputs:
+      - parcel_geometry
+      - acreage
+      - access_status
+      - flood_intersection
+    unknown_inputs_reduce_confidence: true
+  lifestyle:
+    investment_fundamentals_floor: 60
+    unknown_inputs_reduce_confidence: true
+  airport_parking:
+    output_labels:
+      capacity: preliminary
+      revenue: scenario
+    professional_verification_required: true
+  opportunity_zone_development:
+    requires_effective_designation_for_tax_scenario: true
+    eligible_or_nominated_mode: research_only
+    tax_scenario_separate_from_base_value: true
+
+approval:
+  approved_by: null
+  approved_at: null
+  fixture_suite: null
