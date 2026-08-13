@@ -1,0 +1,23 @@
+schema_version: 1
+id: us-federal-outreach-review-baseline-v1
+version: 0.1.0
+status: draft_pending_legal_review
+jurisdiction:
+  country: US
+effective_from: null
+authority_review:
+  reviewed_at: null
+  legal_review_id: null
+  references:
+    - https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business
+    - https://www.ftc.gov/business-guidance/resources/complying-telemarketing-sales-rule
+    - https://www.ecfr.gov/current/title-47/chapter-I/subchapter-B/part-64/subpart-L/section-64.1200
+    - https://www.hud.gov/helping-americans/fair-housing-act-overview
+default_effect: review_required
+activation_requires:
+  - campaign_purpose_and_scope_reviewed
+  - sender_and_participant_jurisdictions_resolved
+  - contact_source_and_permitted_use_approved
+  - channel_and_template_approved
+  - suppression_and_permission_controls_tested
+  - protected_class_and_proxy_targeting_prohibited

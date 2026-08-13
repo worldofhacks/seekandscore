@@ -37,6 +37,10 @@ This log prevents unresolved business and source choices from becoming accidenta
 | D-019 | Allowed communication channels and opt-out process | compliance and user trust |
 | D-020 | Deal approval/authority model | prevent automated external actions |
 | D-021 | Contact and deal-data retention | privacy and operational history |
+| D-026 | Responsible-party roles and minimum authority evidence | avoid treating a router, broker, manager, or similarly named person as an authorized seller |
+| D-027 | Campaign/jurisdiction legal-review owner, expiry, frequency limits, and escalation rules | safe production activation and change monitoring |
+| D-028 | Email, calendar, and secure-upload providers | delivery, data location, webhook security, retention, cost, and portability |
+| D-029 | Restricted-document classification and request packages | least collection, access, malware scan, retention, and due-diligence workflow |
 
 ## Expansion choices
 
@@ -59,3 +63,4 @@ This log prevents unresolved business and source choices from becoming accidenta
 | A-006 | Region packs/adapters contain local behavior | prevent county-specific forks/core conditionals |
 | A-007 | Railway hosts the MVP application plane | requested target, suitable service/worker primitives |
 | A-008 | Single-node Railway PostGIS is MVP-only with explicit HA gate | Railway native HA does not cover community PostGIS image |
+| A-009 | Acquisition outreach is a separate policy-gated engagement context | isolate sensitive contact/consent/suppression data and require human approval before provider handoff |

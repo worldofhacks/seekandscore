@@ -10,9 +10,12 @@ Each version should declare:
 - authoritative GIS layers and boundary vintages;
 - named corridors/reference points;
 - approved scoring-profile reference/overrides;
+- outreach policy reference, rollout mode, and intentionally enabled purposes/channels;
 - compliance/access notes;
 - activation state (`development`, `shadow`, `review`, `active`, `suspended`).
 
 Credentials never belong in region packs. Use secret-variable references resolved by the runtime.
 
 The example Central Texas pack is a planning artifact. Sources remain `planned` until Milestone 0 confirms supported access and rights.
+
+Property location is only one outreach-policy input. Participant, sender, organization, contact-source, and campaign jurisdictions may also matter. A region pack may reference a reviewed policy but cannot declare a channel legal or bypass a stricter suppression/source/organization rule.

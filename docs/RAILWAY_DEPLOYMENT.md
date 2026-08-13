@@ -60,6 +60,10 @@ flowchart TB
   Enrichment --> PostGIS
   Enrichment --> Objects
 
+  Engagement["worker-engagement"] --> Redis
+  Engagement --> PostGIS
+  Engagement --> Providers["Approved email/calendar/upload providers"]
+
   API -. private network .-> PostGIS
   Discovery -. private network .-> PostGIS
   Enrichment -. private network .-> PostGIS
@@ -71,12 +75,13 @@ flowchart TB
 | `api` | persistent service | yes | no | 1 | 2+ for availability/load; remain stateless |
 | `worker-discovery` | persistent worker | no | no | 1 | source backlog/latency or rate-isolation needs |
 | `worker-enrichment` | persistent worker | no | no | 1 | CPU/GIS/document backlog |
+| `worker-engagement` | private persistent worker | no | no | 0 until M5 | approved-send/callback/upload backlog or provider isolation |
 | `scheduler` | cron service | no | no | scheduled singleton | never performs long work |
 | `postgis` | database/image service | no | yes | 1 | migrate externally for HA, not replicas |
 | `redis` | database/image service | no | yes | 1 | external managed/Sentinel when queue HA matters |
 | `pgbouncer` | optional persistent service | no | no | 0 initially | connection count approaches safe DB limit |
 
-Split additional workers by resource/risk class only when needed: OCR/document parsing, geocoding, valuation, ranking, and alert delivery can each get distinct queues and concurrency.
+Split additional workers by resource/risk class only when needed: OCR/document parsing, geocoding, valuation, ranking, and alert delivery can each get distinct queues and concurrency. Engagement is separated earlier for security: it receives only engagement-provider secrets and cannot run discovery or operator-alert jobs.
 
 ## 4. Monorepo deployment model
 
@@ -140,9 +145,9 @@ Worker configurations omit the API migration command and use queue-specific star
 | Environment | Data | Sources | Secrets | Deployment behavior |
 |---|---|---|---|---|
 | `development` | local/synthetic | fixtures/manual | local `.env` | Docker Compose or native tools |
-| `staging` | isolated synthetic/sampled open data | sandbox/low-rate | distinct low-privilege | auto-deploy from integration branch |
+| `staging` | isolated synthetic/sampled open data | sandbox/low-rate | distinct low-privilege | auto-deploy; outreach `log_only` |
 | `production` | real records | approved production access | sealed production | protected main release |
-| PR environment | synthetic fixtures only | production ingestion disabled | no production secrets | focused previews; auto-remove on PR close |
+| PR environment | synthetic fixtures only | production ingestion disabled | no production secrets | focused previews; outreach `disabled`; auto-remove on PR close |
 
 Railway [environments](https://docs.railway.com/environments) isolate private networks. Sealed variables are not automatically copied to duplicated/PR environments; explicitly provision safe preview credentials.
 
@@ -153,6 +158,8 @@ INGESTION_ENABLED=false
 ALERT_DELIVERY_MODE=log
 DATASET_MODE=synthetic
 AI_ANALYST_ENABLED=false
+OUTREACH_MODE=disabled
+OUTREACH_SEND_ENABLED=false
 ```
 
 This prevents a UI pull request from scraping sources, contacting owners, or sending real alerts.
@@ -206,6 +213,10 @@ SENTRY_DSN
 
 Namespace credentials per adapter, such as `SOURCE_TCAD_*`. Never place source tokens in a shared browser-visible `NEXT_PUBLIC_*` variable. Rotate provider credentials independently and record owner/expiry in an external secret inventory.
 
+### Engagement variables
+
+Only API and `worker-engagement` receive the engagement policy ID, contact encryption/HMAC keys, approved provider credentials, sender identity, webhook secret, calendar settings, and secure-upload credentials. Web, discovery, enrichment, scheduler, and alert-delivery processes do not. `OUTREACH_MODE` is `disabled`, `log_only`, or `active`; `active` still requires channel-specific enablement plus server-side identity, preflight, approval, and suppression checks.
+
 ## 9. Database provisioning
 
 1. Deploy the Railway PostGIS template into `staging`.
@@ -251,7 +262,9 @@ Therefore the scheduler performs one short transaction:
 4. Publish/enqueue.
 5. Release resources and exit successfully.
 
-Long acquisition, parsing, spatial, scoring, or delivery work runs in always-on workers with Celery retry/dead-letter policies. Use separate queues and concurrency limits per source to honor rate limits.
+Long acquisition, parsing, spatial, scoring, delivery, or engagement work runs in always-on workers with Celery retry/dead-letter policies. Use separate queues and concurrency limits per source/provider to honor rate limits.
+
+The `engage` queue accepts only durable intents created after exact-content approval. The worker repeats preflight and suppression checks inside the handoff transaction, uses provider idempotency keys, and records delivery uncertainty instead of blindly retrying. Authenticated API webhooks verify signatures and replay windows before appending provider events; projections tolerate duplicates and out-of-order delivery. No provider outage may bypass a new suppression.
 
 ## 12. Migrations and deploy ordering
 
@@ -331,7 +344,7 @@ Railway [volume backups](https://docs.railway.com/volumes/backups) can be schedu
 | MVP production | 24 hours | 4 hours | daily logical backup; source data may be replayable |
 | Acquisition-critical | 1 hour | 2 hours | requires verified WAL/PITR or managed HA provider |
 
-Deal notes, manual resolution decisions, contacts, offers, and outcomes are less reproducible than source data; prioritize them in recovery verification.
+Deal notes, manual resolution decisions, engagement policy decisions, suppressions, approvals, communications, appointments, information requests, offers, and outcomes are less reproducible than source data; prioritize them in recovery verification. Restore tests must prove a retained suppression still blocks a reimported contact.
 
 ## 16. Observability on Railway
 
@@ -349,6 +362,7 @@ Minimum production alerts:
 - backup age or restore verification stale;
 - ranking/read-model snapshot too old;
 - alert delivery failure rate elevated.
+- engagement policy blocks/review backlog, provider uncertainty/failure, wrong-party and opt-out rate, and last successful suppression reconciliation.
 
 Railway log throughput/retention is not an audit archive. Store durable audit events and important source/job outcomes in Postgres/object storage, then export telemetry to an approved external system.
 
@@ -375,6 +389,7 @@ Railway log throughput/retention is not an audit archive. Store durable audit ev
 8. Verify network isolation, health, graceful shutdown, replay, and dead-letter flow.
 9. Configure backups; perform and document a restore.
 10. Run load and failure tests; record baseline cost/resource use.
+11. If the engagement worker exists, keep it `log_only` with synthetic provider callbacks and prove signature, replay, stale-approval, and late-suppression behavior.
 
 ### Gate 2 — production shadow mode
 
@@ -383,6 +398,7 @@ Railway log throughput/retention is not an audit archive. Store durable audit ev
 3. Enable approved sources one at a time with alerts/log delivery disabled.
 4. Compare results to manually verified records.
 5. Keep rankings internal and mark them shadow until data-quality thresholds pass.
+6. Keep outreach disabled until the separate M5 legal/source/security activation gate passes; production data availability alone is not authorization to contact.
 
 ### Gate 3 — operator launch
 
@@ -398,6 +414,7 @@ Railway log throughput/retention is not an audit archive. Store durable audit ev
 - [ ] schema migration is backward compatible and backup exists
 - [ ] Railway config paths/watch patterns include shared dependencies
 - [ ] production ingestion/alert flags are intentional
+- [ ] outreach mode/channel flags are intentional; preview is disabled and unapproved staging is log-only
 - [ ] no production secret entered in Git or public build variables
 - [ ] source terms/access version remains approved
 - [ ] new deployment passes readiness and prior deploy drains safely
@@ -405,6 +422,7 @@ Railway log throughput/retention is not an audit archive. Store durable audit ev
 - [ ] data freshness and Top-25 snapshot advance
 - [ ] smoke tests pass on web, API, map, source evidence, watchlist, and ranking explanation
 - [ ] rollback and data-forward-fix owner identified
+- [ ] provider webhook, idempotency, suppression-race, and kill-switch tests pass for any enabled engagement channel
 
 ## 19. Cost controls
 

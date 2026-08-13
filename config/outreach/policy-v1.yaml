@@ -1,0 +1,137 @@
+schema_version: 1
+id: acquisition-outreach-safe-default-v1
+version: 0.1.0
+status: draft
+effective_from: null
+includes:
+  - us-federal-outreach-review-baseline-v1
+  - us-tx-outreach-review-overlay-v1
+legal_review:
+  required: true
+  review_id: null
+  reviewed_at: null
+  expires_at: null
+
+scope:
+  country: US
+  states: []
+  purposes:
+    - verify_party
+    - request_conversation
+    - request_information
+    - propose_appointment
+    - continue_affirmative_conversation
+
+invariants:
+  require_property_party_assignment: true
+  require_contact_source_policy: true
+  require_contact_point_verification: true
+  require_fresh_preflight_at_send: true
+  require_exact_content_approval: true
+  initial_contact_human_approval: true
+  most_restrictive_policy_wins: true
+  unknown_rule_effect: block
+  response_affects_opportunity_score: false
+  prohibit_protected_class_targeting: true
+  prohibit_distress_exploitation: true
+  prohibit_inferred_relative_or_occupant_contact: true
+  prohibit_consumer_report_prospecting_without_permissible_purpose: true
+  prohibit_dmv_derived_solicitation_without_approved_use: true
+  prohibit_sensitive_location_or_movement_targeting: true
+
+suppression:
+  scopes:
+    - organization
+    - entity
+    - contact_point
+    - candidate
+    - channel
+  immediate_stop_reasons:
+    - do_not_contact
+    - permission_revoked
+    - wrong_party
+    - disputed_identity
+    - permanent_bounce
+    - represented_party_block
+  cancel_pending_actions: true
+  invalidate_unused_approvals: true
+  tombstone_retention_default: indefinite
+
+frequency:
+  # Business limits, not a statement of legal maximums.
+  max_initial_attempts_per_candidate_30d: 3
+  minimum_hours_between_attempts: 72
+  stop_on_reply: true
+
+channels:
+  manual_phone:
+    state: blocked_until_legal_review
+    automatic_send: false
+    require_manual_dial: true
+    require_configured_dnc_check: true
+    dnc_artifact_max_age_days: 31
+    require_local_time: true
+    contact_window_default:
+      start: "10:00"
+      end: "19:00"
+    call_recording: disabled
+    required_disclosures:
+      - truthful_identity
+      - truthful_purpose
+      - callback_or_reply_path
+  individual_email:
+    state: blocked_until_legal_review
+    automatic_send: false
+    require_human_approval: true
+    require_working_opt_out: true
+    required_disclosures:
+      - accurate_sender
+      - accurate_subject
+      - truthful_purpose
+      - physical_postal_address
+  postal_mail:
+    state: blocked_until_legal_review
+    automatic_send: false
+    require_human_approval: true
+    required_disclosures:
+      - truthful_identity
+      - truthful_purpose
+      - return_address
+    prohibit_official_or_government_like_design: true
+  sms_mms:
+    state: disabled
+  automated_dialing:
+    state: disabled
+  prerecorded_or_artificial_voice:
+    state: disabled
+  bulk_or_automated_sequence:
+    state: disabled
+  appointment_coordination:
+    state: relationship_required
+    require_affirmative_interaction: true
+    require_confirmed_channel: true
+    restrict_content_to_coordination: true
+
+approval:
+  invalidated_by:
+    - recipient_change
+    - channel_change
+    - material_content_change
+    - attachment_change
+    - policy_change
+    - contact_evidence_change
+    - new_suppression
+    - permission_revocation
+  single_use: true
+
+data:
+  redact_from_logs_and_traces: true
+  public_fixtures_allowed: false
+  audit_reads_and_exports: true
+  secure_upload_required_for_restricted_documents: true
+  retention_policy_ref: null
+
+environment:
+  send_enabled_default: false
+  preview_send_enabled: false
+  provider_webhooks_required: true

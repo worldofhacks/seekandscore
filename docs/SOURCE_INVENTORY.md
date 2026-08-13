@@ -26,6 +26,8 @@ This is the Phase 0 control document, not permission to automate any source. A s
 | Travis | civil tax/real-estate cases | District Clerk | manual flag/import first | discovery | automation terms/access/document rights |
 | launch counties | trustee/non-tax foreclosure | County Clerk/public notices | manual-assisted first | discovery | indexing, document rights, matching |
 | launch counties | deeds/ownership | County Clerk/recorder | later phase | discovery | access cost and owner-history fields |
+| launch counties | property-party authority | recorder, entity registry, court/probate, signed authorization, listing/agency source | manual verification first | discovery | role semantics, currency, authority scope, permitted use |
+| launch counties | owner/representative contact points | approved provider and official/party-confirmed sources | manual entry/import only until approved | blocked | provider, terms, purpose, contact match, retention, jurisdiction/channel policy |
 | launch counties | active listings | licensed feed/provider | manual import until selected | blocked | provider, contract, price, display rights |
 | launch counties | sold comparables | licensed/public sources | manual/approved provider | blocked | Texas nondisclosure and licensing |
 | federal/local | parcel geometry | CAD/county/local GIS | official download/service | discovery | authority, vintage, completeness |
@@ -55,6 +57,8 @@ sample artifact checksum/object URI
 adapter/parser/config versions
 source owner and incident path
 kill switch and replay procedure
+contact-point/property-party purpose and authority scope, when applicable
+outreach eligibility, consent/permission requirements, and suppression handling, when applicable
 ```
 
 ## Adapter readiness checklist
@@ -72,3 +76,4 @@ kill switch and replay procedure
 - [ ] Fixtures contain no credentials or unnecessary personal/licensed data
 - [ ] Shadow output reviewed against source
 - [ ] Production activation approved
+- [ ] Contact or outreach use separately approved when the capability includes personal/contact data

@@ -36,6 +36,7 @@ flowchart LR
   U --> K["Versioned scoring<br/>and ranking"]
   K --> Q["Top 25 read model"]
   Q --> A["Web, map, alerts,<br/>watchlist, deal workflow"]
+  A --> E["Policy-gated outreach,<br/>scheduling and requests"]
 ```
 
 The MVP is a **modular monolith with separate deployable processes**, not a fleet of premature microservices:
@@ -66,6 +67,7 @@ See [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.
 - [Railway deployment plan](docs/RAILWAY_DEPLOYMENT.md) — service topology, environments, migrations, backups, and production caveats
 - [Delivery roadmap](docs/ROADMAP.md) — epics and milestone sequence
 - [Product definition](docs/PRODUCT_DEFINITION.md) — users, strategies, workflows, and success measures
+- [Owner and representative outreach](docs/OUTREACH_WORKFLOW.md) — party resolution, policy preflight, communication, scheduling, and information requests
 - [Open decisions](docs/DECISIONS.md) — choices that require owner input or data-access validation
 - [Architecture decisions](docs/adr/) — durable technical decisions and their tradeoffs
 
@@ -80,7 +82,8 @@ See [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.
 7. Unknown is a valid value and should reduce confidence, not silently become false.
 8. The Top 25 is a precomputed read model; user requests never wait on live source fetches.
 9. Data access, licensing, privacy, and outreach rules are product requirements.
-10. A second, dissimilar market must prove the abstraction before national expansion.
+10. Acquisition outreach is party-verified, policy-gated, human-approved, suppressible, and auditable.
+11. A second, dissimilar market must prove the abstraction before national expansion.
 
 ## Proposed monorepo shape
 
@@ -99,6 +102,7 @@ python/seekandscore/
 config/
   regions/              geography and jurisdiction packs
   scoring/              versioned deterministic score models
+  outreach/             versioned channel and jurisdiction-safe defaults
 infra/
   railway/              service configuration and runbooks
 docs/
@@ -120,6 +124,7 @@ No Railway project is created in this planning commit. Deployment starts after t
 - Auction minimum bids are not acquisition-cost estimates, and public records can be incomplete.
 - Public repository visibility does not make third-party data redistributable.
 - A source adapter is enabled only after its access method, terms, rate limits, retention, and display rights are recorded.
+- Contact discovery does not authorize contact: every production channel needs reviewed source use, party identity, policy, human approval, suppression, and audit controls.
 
 ## Contributing and license
 

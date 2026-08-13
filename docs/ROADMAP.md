@@ -10,7 +10,7 @@ The roadmap is outcome-based. Calendar dates begin only after critical source ac
 | `0.2` Travis intelligence | approved Travis facts resolved and enriched | M2 |
 | `0.3` Ranking alpha | reviewed deterministic Top 25 on internal data | M3 |
 | `1.0` Central Texas operator MVP | Travis/Bastrop/Caldwell Top 25, map, evidence, watchlist, alerts | M4 |
-| `1.1` Acquisition operations | distress, owner portfolios, auctions, deal workflow | M5 |
+| `1.1` Acquisition operations | distress, owner portfolios, outreach, scheduling, information requests, auctions, deal workflow | M5 |
 | `1.2` Specialist underwriting | parking, zoning/utilities, offers, OZ scenarios | M6 |
 | `2.0` Multi-market proof | one non-Texas market runs on shared core | M7 |
 | `3.x` National operating platform | certified adapters and scalable market activation | M8 |
@@ -83,8 +83,11 @@ The roadmap is outcome-based. Calendar dates begin only after critical source ac
 
 - Automated/manual-assisted court and trustee notice pipelines.
 - Owner/entity resolution and related-parcel portfolios.
+- Source-supported property-party roles, authority evidence, contact provenance, and review.
 - Auction inventory, due diligence, clearing-cost and max-bid scenarios.
-- Deal stages, contacts, attempts, offers, follow-ups, and outcomes.
+- Policy preflight, suppressions, human-approved attempts, replies, and immutable outreach audit.
+- Appointment coordination and structured secure information requests.
+- Deal stages, offers, follow-ups, and outcomes linked to engagement history.
 - Improved automated comparable workflows.
 
 ## Milestone 6 — specialist underwriting
@@ -134,6 +137,7 @@ Use a small consistent taxonomy:
 - `area: scoring`
 - `area: web`
 - `area: deals`
+- `area: outreach`
 - `area: operations`
 
 ### Priority/state

@@ -26,6 +26,7 @@ rollout:
   ranking_mode: shadow
   ingestion_enabled: false
   alert_delivery: disabled
+  outreach_send_enabled: false
   activation_requires:
     - source_rights_approved
     - parcel_match_benchmark_passed
@@ -33,6 +34,12 @@ rollout:
     - scoring_profile_approved
 
 scoring_profile: central-texas-v1
+
+outreach:
+  mode: disabled_pending_review
+  policy_ref: acquisition-outreach-safe-default-v1
+  enabled_purposes: []
+  enabled_channels: []
 
 strategies:
   - overall
@@ -122,3 +129,4 @@ compliance_notes:
   - Texas sale-price disclosure limitations affect comparable coverage.
   - Opportunity Zone location is not a tax-qualification conclusion.
   - Court, owner, and contact data require purpose and retention controls.
+  - Outreach remains blocked until Texas and federal campaign applicability, sources, channels, templates, suppressions, and review ownership are approved.

@@ -1,0 +1,21 @@
+schema_version: 1
+id: us-tx-outreach-review-overlay-v1
+version: 0.1.0
+status: draft_pending_legal_review
+jurisdiction:
+  country: US
+  state: TX
+effective_from: null
+extends:
+  - us-federal-outreach-review-baseline-v1
+authority_review:
+  reviewed_at: null
+  legal_review_id: null
+  references:
+    - https://tcss.legis.texas.gov/resources/BC/htm/BC.301.htm
+default_effect: review_required
+activation_requires:
+  - texas_campaign_applicability_reviewed
+  - texas_contact_source_use_reviewed
+  - configured_local_time_window_approved
+  - identity_purpose_and_suppression_controls_tested

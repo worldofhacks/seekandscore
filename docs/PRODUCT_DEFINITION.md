@@ -88,11 +88,16 @@ An eligible or state-nominated 2027 tract is a research signal until Treasury ce
 ### Off-market acquisition
 
 1. Identify a supported motivation/distress signal.
-2. Resolve the owner/entity and related parcel portfolio with match confidence.
-3. Verify contact-data source and allowed use.
-4. Track contact attempts and follow-ups.
-5. Create opening, target, and walk-away price scenarios.
-6. Advance the deal through due diligence, offer, negotiation, contract, close, pass, or loss.
+2. Resolve the record owner or source-supported manager/representative, role, authority scope, and related parcel portfolio with match confidence.
+3. Verify the contact point, its source, permitted use, freshness, channel permission, and suppression state.
+4. Declare a narrow outreach purpose and pass the versioned jurisdiction/source/channel policy preflight.
+5. Human-review and individually approve the exact initial communication or record a manual attempt.
+6. Classify the response, wrong-party report, opt-out, representation, delivery failure, or next action.
+7. With affirmative participation, coordinate a meeting/site visit or issue a structured, secure information request.
+8. Create opening, target, and walk-away price scenarios.
+9. Advance the deal through due diligence, offer, negotiation, contract, close, pass, or loss.
+
+See [Owner and representative outreach](OUTREACH_WORKFLOW.md) for the detailed workflow and activation gates.
 
 ### Auction
 
@@ -124,6 +129,8 @@ An eligible or state-nominated 2027 tract is a research signal until Treasury ce
 - Versioned overall and strategy rankings with stable movement explanations
 - Top 25, map, filters, research queue, new-opportunity feed, and daily brief
 - Watchlist, notes, tasks, status pipeline, owner portfolio, and CRM-lite workflow
+- Responsible-party and authority resolution with contact-point provenance and reversible review
+- Policy-gated, human-approved outreach cases, suppression, replies, scheduling, and secure information requests
 - Source/data-health dashboard and freshness alerts
 - Outcome capture for later calibration and prediction
 - Optional AI summaries constrained to cited source evidence
@@ -133,6 +140,7 @@ An eligible or state-nominated 2027 tract is a research signal until Treasury ce
 - Consumer marketplace or Zillow replacement
 - Nationwide simultaneous launch
 - Automated purchase, bidding, owner contact, or offer sending
+- Bulk campaigns, automated dialing, prerecorded/artificial voice, unattended sequences, or SMS without separately approved policy and permission controls
 - Legal, title, tax, appraisal, engineering, environmental, or zoning conclusions
 - A general-purpose CRM
 - Opaque machine-learning ranking
@@ -171,5 +179,8 @@ After five minutes, the operator should have a materially better research and ac
 - Unknown and conflicting values remain visible.
 - Opportunity Zone tax scenarios never inflate the base property value estimate.
 - No outreach occurs without a human action and an allowed contact-data source.
+- No contact point is eligible without a reviewed property-party role; a vendor match alone is insufficient.
+- Opt-out, wrong-party, disputed-identity, and permission-revocation events stop pending work and invalidate unused approvals.
+- Outreach response behavior may change deal workflow but never automatically changes opportunity ranking.
 - Every score, estimate, and rank movement is reproducible from versioned inputs.
 - AI text cites internal evidence and is clearly secondary to structured facts.

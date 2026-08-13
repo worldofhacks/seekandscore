@@ -37,6 +37,10 @@ flowchart TB
   OUT --> Q
   Q --> ALT["Alert delivery adapters"]
 
+  API --> ENG["Engagement policy<br/>and case service"]
+  ENG --> PG
+  ENG --> COM["Approved communication,<br/>calendar and upload adapters"]
+
   AI["Optional AI analyst"] --> OBJ
   AI --> PG
   API --> AI
@@ -104,17 +108,25 @@ It never calls an LLM for numerical decisions. Ranking reads stable inputs for a
 
 ### 3.10 Deal operations
 
-Owns watchlists, notes, research tasks, next actions, deal status, owner contact records, contact attempts, offers, auction checklists, outcomes, and feedback labels.
+Owns watchlists, notes, research tasks, next actions, deal status, offers, auction checklists, acquisition outcomes, and feedback labels.
 
-This is intentionally CRM-lite. External communication is human-initiated for MVP.
+This is intentionally CRM-lite. It consumes engagement outcomes and can request a new outreach case, but it does not own contact points, messages, suppressions, or permissions.
 
-### 3.11 Alerts and briefs
+### 3.11 Engagement
+
+Owns contact-point observations, permitted-use metadata, permissions/consent, suppressions, outreach cases, participants, versioned policy preflights, exact-message approvals, communications, provider/manual attempts, replies, appointments, information requests, document submissions, and engagement outcomes.
+
+Identity remains authoritative for entities and source-supported property-party roles. Engagement cannot create a party relationship merely to make a contact endpoint usable. Initial contact is case-based and human-approved; production sends fail closed on missing/stale policy, identity, source, approval, or suppression inputs. SMS, automated dialing, prerecorded/artificial voice, bulk campaigns, and unattended sequences are disabled.
+
+See [Owner and representative outreach](OUTREACH_WORKFLOW.md) and [ADR 0005](adr/0005-policy-gated-human-outreach.md).
+
+### 3.12 Alerts and briefs
 
 Owns alert rules, deduplication, delivery preferences, delivery attempts, Top-25 movement summaries, and daily briefs.
 
 It consumes durable events and never independently infers property facts.
 
-### 3.12 AI analyst
+### 3.13 AI analyst
 
 Owns prompts, model configuration, source citations, generated summaries, review state, and cost/latency logs.
 
@@ -130,13 +142,17 @@ The word “property” is too ambiguous for storage design. Use these distinct 
 | `ParcelIdentifier` | A jurisdiction/source-scoped APN, account, geographic ID, or alternate identifier |
 | `InvestmentCandidate` | The unit being ranked; one parcel or an assemblage of several parcels |
 | `Listing` | A time-varying marketing record that may cover one or more parcels |
-| `OwnerEntity` | A person, organization, trust, estate, or unresolved party |
+| `Entity` | A person, organization, trust, estate, public body, or unresolved party |
 | `OwnershipInterest` | A source-supported relationship between owner and parcel during an interval |
+| `PropertyPartyAssignment` | A source-supported entity role and authority scope for a property/candidate |
 | `Observation` | A source's assertion about an entity or attribute |
 | `ResolvedFact` | The selected current value/range plus the evidence and resolution policy used |
 | `PropertyEvent` | A durable, deduplicated material or historical change |
 | `UnderwritingScenario` | Versioned assumptions and outputs for one candidate and strategy |
 | `Deal` | The operator's pursuit of a candidate through an acquisition workflow |
+| `OutreachCase` | A declared, policy-reviewed purpose for communicating with verified property parties |
+| `Appointment` | A participant-confirmed call, meeting, site visit, inspection, or records review |
+| `InformationRequest` | A structured request for property evidence with item-level status and controls |
 
 This separation supports parcel splits, assemblages, relisted properties, conflicting ownership records, and multiple concurrent acquisition strategies.
 
@@ -154,7 +170,8 @@ Use one PostGIS database initially, separated into schemas with explicit ownersh
 | `geo` | layer versions, geometry, intersections, derived metrics | versioned/rebuildable |
 | `market` | listings, sales, comps, estimates, scenarios | append/snapshot |
 | `intelligence` | signals, events, scores, rankings, explanations | append/snapshot plus read model |
-| `deal` | watchlists, tasks, notes, contacts, offers, outcomes | transactional |
+| `deal` | watchlists, tasks, notes, offers, acquisition stages/outcomes | transactional |
+| `engagement` | contact points, policy decisions, suppressions, communications, appointments, information requests | sensitive transactional/history |
 | `delivery` | alerts, briefs, delivery attempts | transactional/history |
 | `readmodel` | denormalized dashboard, map, detail projections | rebuildable |
 
@@ -403,12 +420,22 @@ GET  /v1/events
 GET  /v1/daily-brief
 GET  /v1/auctions
 GET  /v1/owners/{id}/portfolio
+GET  /v1/candidates/{id}/responsible-parties
 
 POST /v1/candidates/{id}/watch
 POST /v1/candidates/{id}/pass
 POST /v1/candidates/{id}/notes
 POST /v1/deals
 PATCH /v1/deals/{id}
+POST /v1/candidates/{id}/outreach-cases
+POST /v1/outreach-cases/{id}/preflight
+POST /v1/outreach-cases/{id}/communications/draft
+POST /v1/communications/{id}/approve
+POST /v1/communications/{id}/send
+POST /v1/communications/{id}/record-manual-attempt
+POST /v1/outreach-cases/{id}/appointments
+POST /v1/outreach-cases/{id}/information-requests
+POST /v1/suppressions
 ```
 
 Dashboard endpoints read denormalized projections. They never synchronously fetch a county source, run a spatial overlay, invoke an LLM, or recompute the entire ranking.
@@ -428,6 +455,7 @@ Initial queues:
 - `market`: comps and valuations;
 - `score`: signals, underwriting, rankings, read models;
 - `deliver`: alerts, briefs, and optional AI summaries.
+- `engage`: authenticated inbound callbacks, approved provider handoff, appointment reconciliation, and restricted-document scanning; no job can create its own recipient or approval.
 
 Workers acknowledge after durable writes, handle SIGTERM, use bounded retries with jitter, and route exhausted failures to a dead-letter state visible in operations UI.
 
@@ -448,6 +476,10 @@ Map endpoints return simplified geometry or vector tiles by zoom level, never fu
 - Encrypt sensitive exports and set retention/deletion policies by data class/source rights.
 - Sanitize logs and traces; use stable internal IDs rather than owner names or source credentials.
 - Human confirmation before contact/offer/auction actions.
+- Fresh policy preflight and exact-content approval immediately before any engagement-provider handoff.
+- Central suppression/permission checks at draft, approval, queue, and send boundaries; late revocation cancels pending work.
+- Contact endpoints, message bodies, and restricted documents are redacted from logs/traces/public fixtures and audited on access/export.
+- Engagement providers default off per environment/channel; preview deployments cannot contact real parties.
 - Apply source-specific redistribution and display rules to API and export paths.
 - Separate public/open fixtures from real owner, licensed MLS, court-document, and contact datasets.
 
@@ -491,7 +523,7 @@ Prove the region-pack model with one non-Texas market that differs in assessor a
 
 ### Stage C: National portfolio
 
-Introduce a source-control plane, adapter certification tests, vendor datasets/crosswalks, workload quotas, region activation workflow, and explicit data-residency/retention policy. Consider extracting high-volume acquisition/document processing and notification delivery.
+Introduce a source-control plane, adapter certification tests, vendor datasets/crosswalks, workload quotas, region activation workflow, and explicit data-residency/retention policy. Consider extracting high-volume acquisition/document processing, engagement, and notification delivery.
 
 Move PostGIS to managed HA before strict availability objectives or single-node storage exceeds accepted recovery risk. Read replicas, lakehouse/warehouse analytics, and search services follow measured workloads rather than geography count alone.
 
@@ -505,6 +537,7 @@ Move PostGIS to managed HA before strict availability objectives or single-node 
 - Worker interruption: safely retry idempotent job after visibility timeout.
 - Ranking failure: continue serving the last completed snapshot with age warning.
 - AI failure: omit narrative; structured facts and decisions remain available.
+- Engagement provider failure: preserve the approved communication and policy decision, show uncertain/failed delivery, reconcile idempotently, and never retry after a new suppression.
 - PostGIS failure: restore from tested snapshot/logical backup according to declared RPO/RTO.
 
 ## 18. Extraction criteria

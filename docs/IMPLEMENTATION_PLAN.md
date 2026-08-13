@@ -107,6 +107,7 @@ flowchart LR
 ### 5.7 Application and deal operations
 
 - OpenAPI contract, generated client, auth, Top 25, detail, map, feed, watchlist, tasks/notes, daily brief, alerts, and CRM-lite status.
+- Responsible-party review, policy-gated outreach cases, central suppression, individually approved communication, appointment coordination, and structured information requests.
 - Accessibility and responsive field use.
 
 ### 5.8 Reliability and security
@@ -127,6 +128,7 @@ Estimated elapsed time: 1–3 weeks. This milestone can reveal that a source nee
 - Written access/rights record and preferred mechanism for every source.
 - Listing-data decision: licensed feed, partner export, or manual import.
 - Map/geocoder, authentication, alert channel, and object-storage decisions.
+- Outreach discovery: responsible-party roles/authority evidence, contact sources and permitted use, campaign classifications, federal/Texas applicability review, suppression/retention, safe frequency, and initial email/calendar/upload provider decision.
 - Opportunity Zone 2018 and 2027 official dataset inventory with cohort/vintage/status rules.
 - A manually reviewed benchmark set of 100–300 representative parcels/candidates, including duplicates, address mismatch, split/merge, boundary, distress, and bad-deal examples.
 - Scoring workshop: component definitions, risk caps, unknown treatment, strategy applicability, and example ranking.
@@ -146,6 +148,7 @@ Estimated elapsed time: 1–3 weeks. This milestone can reveal that a source nee
 - Parcel geometry/identifier coverage cannot support safe resolution.
 - No usable price/value signal can be obtained.
 - Source costs exceed the accepted MVP budget.
+- No approved owner/representative contact source or campaign/channel policy exists; retain research and manual deal tracking but defer external-send capability.
 
 ## Milestone 1 — engineering foundation and Railway staging
 
@@ -271,13 +274,23 @@ Estimated elapsed time: 4–8 weeks, highly source-dependent.
 - County Clerk/trustee foreclosure notices and instrument/document metadata where allowed.
 - Owner/entity resolution, alias review, ownership history, and related-parcel portfolio.
 - Auction inventory, title/redemption/as-is warnings, expected clearing-cost scenario, maximum-bid engine, checklist, and outcomes.
-- Deal pipeline, contact-source metadata, contact attempts, offers, follow-ups, and audit.
+- Property-party roles and authority evidence for owners, managers, brokers, trustees/executors, attorneys, registered agents, and public officers without conflating routing with sale authority.
+- Engagement schema: contact-point provenance/permitted use, permissions, suppressions, cases, preflight decisions, communications, appointments, information requests, documents, and outcomes.
+- Outreach workspace with participant evidence, case timeline, explainable blocks, exact-content approval, stop action, and deal next action.
+- Manual attempt logging and `.ics` appointment export first; a single-message email adapter and secure upload flow only after legal/security activation gates.
+- Deal pipeline, offers, follow-ups, outcomes, and audit, linked to rather than owning engagement history.
 - Automated land/commercial/residential comparable workflows where data supports them.
 
 ### Acceptance criteria
 
 - Court/notice match confidence and evidence are visible; ambiguous parties never auto-merge solely by name.
 - Every contact datum records source and allowed use.
+- Every eligible recipient has a reviewed property role, authority scope, evidence, effective interval, and contact match; wrong-party reports stop work and return identity to review.
+- Every provider send has a fresh passing policy preflight, exact-content human approval, suppression check, environment/channel kill switch, and immutable audit entry.
+- Cold outreach is never automatically sent or treated as transactional because it proposes scheduling; SMS, automated dialing, prerecorded/artificial voice, bulk campaigns, and unattended sequences remain disabled.
+- An opt-out, revocation, wrong-party report, disputed identity, or permanent bounce cancels pending work and invalidates unused approvals.
+- Appointments require affirmative confirmation and preserve time zone/reschedule/cancel history; sensitive requested documents use restricted upload, scanning, authorization, audit, and retention controls.
+- Engagement outcomes can update deal next actions but never automatically alter opportunity scores.
 - Minimum bid is never used as likely acquisition cost without a separate model/scenario.
 - Maximum-bid outputs include conservative value, all deductions, required margin, policy/model version, and professional-review status.
 - Auction/deal outcomes feed calibration tables without altering historical score runs.
@@ -368,9 +381,11 @@ Create migrations in dependency order:
 10. `market.listing`, `market.listing_snapshot`, `market.sale_observation`, `market.comparable_set`, `market.value_estimate`
 11. `intelligence.signal_rule`, `intelligence.signal`, `intelligence.property_event`
 12. `intelligence.score_model`, `intelligence.score_run`, `intelligence.score_component`, `intelligence.ranking_snapshot`
-13. `deal.watch`, `deal.note`, `deal.task`, `deal.deal`, `deal.contact_attempt`, `deal.offer`, `deal.outcome`
-14. `delivery.alert_rule`, `delivery.alert`, `delivery.delivery_attempt`, `delivery.daily_brief`
-15. `readmodel.top_candidate`, `readmodel.candidate_detail`, `readmodel.map_candidate`, `readmodel.source_health`
+13. `identity.property_party_assignment`, `deal.watch`, `deal.note`, `deal.task`, `deal.deal`, `deal.offer`, `deal.outcome`
+14. `engagement.contact_point`, `engagement.contact_permission`, `engagement.suppression_entry`, `engagement.outreach_case`, `engagement.participant`
+15. `engagement.policy_decision`, `engagement.communication`, `engagement.approval`, `engagement.delivery_attempt`, `engagement.appointment`, `engagement.information_request`, `engagement.document_submission`
+16. `delivery.alert_rule`, `delivery.alert`, `delivery.delivery_attempt`, `delivery.daily_brief`
+17. `readmodel.top_candidate`, `readmodel.candidate_detail`, `readmodel.map_candidate`, `readmodel.source_health`
 
 Every migration identifies its owning context, downgrade/forward-fix strategy, backfill plan, and compatibility window.
 
@@ -422,6 +437,8 @@ For each model version, store candidate inputs, expected components, penalties, 
 - Source becomes stale; UI retains last fact and lowers confidence.
 - Material price/distress change creates one movement event and one alert.
 - Boundary parcel shows correct OZ cohort/status/overlap.
+- Resolve party; block an unverified endpoint; approve one exact message; suppress it before queue handoff; confirm no send occurs.
+- Record wrong party, opt-out, bounce, appointment reschedule/cancel, and restricted document receipt without leaking contact/content to logs.
 
 ### Performance and failure tests
 
@@ -436,6 +453,7 @@ For each model version, store candidate inputs, expected components, penalties, 
 - Authentication/authorization negative tests.
 - Export and source-rights enforcement.
 - Owner/contact data absent from logs/traces/public fixtures.
+- Outreach authorization, stale-approval, late-suppression, webhook-signature/replay, template-variable, and restricted-upload negative tests.
 - Production ingestion and alert isolation from preview environments.
 
 ## 9. Proposed launch quality gates
@@ -502,6 +520,8 @@ Before production launch:
 - Retention/deletion jobs with legal hold capability where required.
 - No AI training or third-party submission of restricted documents unless explicitly permitted.
 - Human confirmation before any external contact, offer, or bid action.
+- Party/authority evidence, source permitted use, fresh preflight, exact-content approval, central suppression, and environment/channel kill switches for outreach.
+- No protected-class/proxy targeting or distress-based coercive content; channel/campaign/jurisdiction legal approval is versioned and fails closed when absent.
 
 ## 12. Risk register
 
@@ -518,6 +538,7 @@ Before production launch:
 | Single-node Railway PostGIS failure | medium / high | backups, restore tests, accepted RPO/RTO, managed HA gate | uptime/data volume/capital threshold |
 | Worker/cron misses source window | medium / high | short dispatcher, durable jobs, freshness alerts, source-specific schedules | overlap/oldest-job threshold |
 | Personal/licensed data leaks through public repo/logs | low / severe | synthetic fixtures, secret scanning, log policy, export controls | any incident or new source |
+| Wrong party, prohibited contact, or outreach-policy failure | medium / severe | conservative identity review, source provenance, counsel-approved policy packs, suppression ledger, human approval, kill switches, immutable audit | complaint, wrong-party spike, policy/source change |
 | Nationwide adapter burden grows nonlinearly | high / high | second-market pilot, source capability model, vendor strategy, activation gates | core branching or repeated custom work |
 | Costs rise with geometry/documents/AI | medium / medium | budgets, per-source/service cost metrics, lifecycle, AI off by default | monthly ceiling reached |
 | AI fabricates authoritative detail | medium / high | cited evidence only, no numeric authority, review state, optional failure | unsupported citation/claim |
@@ -535,6 +556,8 @@ The project can begin scaffolding, but these choices gate production scope:
 - What RPO/RTO and single-node PostGIS risk are acceptable?
 - What repository license, if any?
 - Which outreach channels and contact-data sources are allowed?
+- Who approves each campaign/jurisdiction policy, which roles count as authorized representatives, and what frequency/retention limits apply?
+- Which email/calendar/secure-upload providers are acceptable after manual-mode validation?
 
 Track the live list in [DECISIONS.md](DECISIONS.md).
 
