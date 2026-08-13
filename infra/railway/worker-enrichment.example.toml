@@ -13,7 +13,7 @@ watchPatterns = [
 ]
 
 [deploy]
-startCommand = "python -m seekandscore.worker --queues resolve,geo,market,score,deliver"
+startCommand = "/app/scripts/runtime/python-entrypoint.sh python -m seekandscore.worker --queues resolve,geo,market,score,deliver"
 restartPolicyType = "ALWAYS"
 restartPolicyMaxRetries = 10
 drainingSeconds = 60

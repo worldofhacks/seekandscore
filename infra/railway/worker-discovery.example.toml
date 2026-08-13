@@ -12,7 +12,7 @@ watchPatterns = [
 ]
 
 [deploy]
-startCommand = "python -m seekandscore.worker --queues acquire,parse"
+startCommand = "/app/scripts/runtime/python-entrypoint.sh python -m seekandscore.worker --queues acquire,parse"
 restartPolicyType = "ALWAYS"
 restartPolicyMaxRetries = 10
 drainingSeconds = 60

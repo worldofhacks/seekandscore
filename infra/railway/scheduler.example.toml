@@ -12,6 +12,6 @@ watchPatterns = [
 ]
 
 [deploy]
-startCommand = "python -m seekandscore.scheduler dispatch-due"
+startCommand = "/app/scripts/runtime/python-entrypoint.sh python -m seekandscore.scheduler dispatch-due"
 cronSchedule = "*/15 * * * *"
 restartPolicyType = "NEVER"

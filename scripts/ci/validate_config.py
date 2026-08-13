@@ -47,6 +47,24 @@ def require_safe_runtime_defaults() -> list[str]:
     return failures
 
 
+def require_safe_railway_commands() -> list[str]:
+    """Ensure Railway cannot bypass fail-closed Python runtime defaults."""
+
+    failures: list[str] = []
+    safe_entrypoint = "/app/scripts/runtime/python-entrypoint.sh"
+    for path in sorted((ROOT / "infra/railway").glob("*.toml")):
+        config = parse_toml(path)
+        deploy = config.get("deploy", {}) if isinstance(config, dict) else {}
+        command = deploy.get("startCommand") if isinstance(deploy, dict) else None
+        if isinstance(command, str) and "python -m seekandscore" in command:
+            if not command.startswith(f"{safe_entrypoint} "):
+                failures.append(
+                    f"{path.relative_to(ROOT)}: Python startCommand must invoke "
+                    f"{safe_entrypoint}"
+                )
+    return failures
+
+
 def main() -> int:
     failures: list[str] = []
     paths = sorted((ROOT / "config").rglob("*.yaml"))
@@ -64,6 +82,7 @@ def main() -> int:
 
     try:
         failures.extend(require_safe_runtime_defaults())
+        failures.extend(require_safe_railway_commands())
     except Exception as exc:  # noqa: BLE001
         failures.append(f"deployment safety validation failed: {exc}")
 

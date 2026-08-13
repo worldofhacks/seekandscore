@@ -33,6 +33,6 @@ COPY --from=build --chown=app:app /app /app
 USER 10001:10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=3)"
+  CMD python -c "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.getenv('PORT', '8000')}/readyz\", timeout=3)"
 ENTRYPOINT ["/app/scripts/runtime/python-entrypoint.sh"]
 CMD ["python", "-m", "seekandscore.api"]

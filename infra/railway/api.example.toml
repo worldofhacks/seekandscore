@@ -14,7 +14,6 @@ watchPatterns = [
 
 [deploy]
 preDeployCommand = "python -m seekandscore.db.migrate upgrade"
-startCommand = "python -m seekandscore.api"
 healthcheckPath = "/readyz"
 healthcheckTimeout = 300
 restartPolicyType = "ALWAYS"
