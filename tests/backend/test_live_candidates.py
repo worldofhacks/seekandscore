@@ -24,10 +24,10 @@ from seekandscore.bootstrap import AppContainer
 from seekandscore.platform.settings import Settings
 from seekandscore.readmodels import LiveCandidateRepository
 from seekandscore.registry import TRAVIS_TCAD_SOURCE, InMemorySourceRegistry
-from seekandscore.registry.sources import TRAVIS_TCAD_DISPLAY_APPROVAL_ID
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
 SHA = "a" * 64
+DISPLAY_APPROVAL_ID = "SRC-TCAD-TNR-BOUNDED-DISPLAY-20260813-V1"
 
 
 def seeded_repository() -> MemoryAcquisitionRepository:
@@ -169,7 +169,7 @@ def test_container_accepts_only_recorded_display_approval() -> None:
         dataset_mode="live",
         database_url="sqlite://",
         live_source_display_enabled=True,
-        live_source_display_approval_id=TRAVIS_TCAD_DISPLAY_APPROVAL_ID,
+        live_source_display_approval_id=DISPLAY_APPROVAL_ID,
     )
 
     container = AppContainer.build(settings)
