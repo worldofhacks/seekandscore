@@ -77,3 +77,18 @@ def test_complete_outreach_activation_is_representable() -> None:
     )
 
     assert settings.outreach_send_enabled is True
+
+
+def test_staging_ingestion_requires_durable_object_storage() -> None:
+    with pytest.raises(ValidationError, match="durable S3"):
+        Settings(
+            app_env="staging",
+            dataset_mode="live",
+            ingestion_enabled=True,
+            ingestion_activation_id="operator-approved-shadow-20260813",
+        )
+
+
+def test_public_live_display_requires_separate_approval() -> None:
+    with pytest.raises(ValidationError, match="LIVE_SOURCE_DISPLAY_APPROVAL_ID"):
+        Settings(live_source_display_enabled=True)

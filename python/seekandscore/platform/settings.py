@@ -56,6 +56,26 @@ class Settings(BaseSettings):
     dataset_mode: DatasetMode = DatasetMode.SYNTHETIC
     ingestion_enabled: bool = False
     ingestion_activation_id: str | None = None
+    ingestion_source_id: str = "travis_tcad_parcels"
+    ingestion_page_size: int = Field(default=250, ge=1, le=1000)
+    ingestion_max_records: int = Field(default=250, ge=1, le=10_000)
+    ingestion_where: str = "PROP_ID IS NOT NULL AND tcad_acres >= 1"
+    ingestion_order_by: str = "OBJECTID ASC"
+    ingestion_cities: str = ""
+    ingestion_http_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    ingestion_min_request_interval_seconds: float = Field(default=1.0, ge=0.25, le=10)
+    ingestion_max_retries: int = Field(default=3, ge=0, le=5)
+    live_source_display_enabled: bool = False
+    live_source_display_approval_id: str | None = None
+    raw_artifact_root: str = "var/raw-artifacts"
+
+    object_storage_endpoint: str | None = None
+    object_storage_region: str = "auto"
+    object_storage_bucket: str | None = None
+    object_storage_access_key_id: str | None = Field(default=None, repr=False)
+    object_storage_secret_access_key: str | None = Field(default=None, repr=False)
+    object_storage_prefix: str = "raw-artifacts"
+    object_storage_force_path_style: bool = False
 
     alert_delivery_mode: AlertDeliveryMode = AlertDeliveryMode.LOG
     alert_delivery_provider: str | None = None
@@ -87,6 +107,29 @@ class Settings(BaseSettings):
                 raise ValueError("enabled ingestion requires DATASET_MODE=live")
             if not self.ingestion_activation_id:
                 raise ValueError("enabled ingestion requires INGESTION_ACTIVATION_ID")
+            if self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION} and not all(
+                (
+                    self.object_storage_endpoint,
+                    self.object_storage_bucket,
+                    self.object_storage_access_key_id,
+                    self.object_storage_secret_access_key,
+                )
+            ):
+                raise ValueError(
+                    "staging/production ingestion requires durable S3-compatible object storage"
+                )
+
+        allowed_where = "PROP_ID IS NOT NULL AND tcad_acres >= 1"
+        if self.ingestion_where != allowed_where:
+            raise ValueError("INGESTION_WHERE is not an approved screening predicate")
+        if self.ingestion_order_by != "OBJECTID ASC":
+            raise ValueError("INGESTION_ORDER_BY must be OBJECTID ASC")
+
+        cities = tuple(city.strip().upper() for city in self.ingestion_cities.split(",") if city)
+        if len(cities) > 20 or any(not city.replace(" ", "").isalpha() for city in cities):
+            raise ValueError("INGESTION_CITIES must contain at most 20 city names")
+        if self.live_source_display_enabled and not self.live_source_display_approval_id:
+            raise ValueError("live source display requires LIVE_SOURCE_DISPLAY_APPROVAL_ID")
 
         if self.alert_delivery_mode is AlertDeliveryMode.PROVIDER:
             if self.app_env is not AppEnvironment.PRODUCTION:

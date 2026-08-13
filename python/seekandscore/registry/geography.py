@@ -34,7 +34,7 @@ class InMemoryGeographyRegistry:
 
 _SYNTHETIC_JURISDICTIONS = (
     Jurisdiction(
-        id="us-tx-453",
+        id="us-tx-travis",
         country_code="US",
         state_fips="48",
         county_fips="453",
@@ -44,7 +44,7 @@ _SYNTHETIC_JURISDICTIONS = (
         region_pack_id="us-tx-central-texas",
     ),
     Jurisdiction(
-        id="us-tx-021",
+        id="us-tx-bastrop",
         country_code="US",
         state_fips="48",
         county_fips="021",
@@ -54,7 +54,7 @@ _SYNTHETIC_JURISDICTIONS = (
         region_pack_id="us-tx-central-texas",
     ),
     Jurisdiction(
-        id="us-tx-055",
+        id="us-tx-caldwell",
         country_code="US",
         state_fips="48",
         county_fips="055",

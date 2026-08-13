@@ -7,3 +7,4 @@ done
 
 mc mb --ignore-existing "local/${OBJECT_STORAGE_BUCKET}"
 mc anonymous set none "local/${OBJECT_STORAGE_BUCKET}"
+mc version enable "local/${OBJECT_STORAGE_BUCKET}"

@@ -11,5 +11,7 @@ DESCRIPTOR = ModuleDescriptor(
         "source_definitions",
         "source_policies",
         "adapter_versions",
+        "source_runs",
+        "source_freshness",
     ),
 )

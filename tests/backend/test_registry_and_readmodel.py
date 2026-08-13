@@ -11,6 +11,7 @@ def test_module_ownership_is_declared_and_unique() -> None:
         "registry",
         "identity",
         "engagement",
+        "acquisition",
     ]
     assert len({module.name for module in MODULES}) == len(MODULES)
     assert all(module.owns for module in MODULES)

@@ -13,7 +13,7 @@ Use Railway for the stateless application plane and MVP infrastructure:
 - Redis queue/cache
 - initial single-node PostGIS
 
-Use S3-compatible object storage for immutable source artifacts. The provider is an open Phase 0 decision; production disaster recovery should not rely solely on a database volume in the same Railway project.
+Use S3-compatible object storage for source artifacts. For the first staging feed, prefer a private Railway Storage Bucket named `raw-artifacts` in `sjc`. Production storage remains a decision gate, and disaster recovery must not rely solely on storage inside the same Railway project.
 
 Railway is a good fit for service deployment and private networking, but its database templates remain operator-managed. Backups, tuning, security, monitoring, upgrades, and recovery are our responsibility. See Railway's [database](https://docs.railway.com/databases) and [PostgreSQL](https://docs.railway.com/databases/postgresql) documentation.
 
@@ -77,6 +77,7 @@ flowchart TB
 | `worker-enrichment` | persistent worker | no | no | 1 | CPU/GIS/document backlog |
 | `worker-engagement` | private persistent worker | no | no | 0 until M5 | approved-send/callback/upload backlog or provider isolation |
 | `scheduler` | cron service | no | no | scheduled singleton | never performs long work |
+| `ingestion-travis` | cron/one-shot service | no | no | 0 until approved | first bounded source proof only |
 | `postgis` | database/image service | no | yes | 1 | migrate externally for HA, not replicas |
 | `redis` | database/image service | no | yes | 1 | external managed/Sentinel when queue HA matters |
 | `pgbouncer` | optional persistent service | no | no | 0 initially | connection count approaches safe DB limit |
@@ -204,6 +205,7 @@ OBJECT_STORAGE_REGION
 OBJECT_STORAGE_BUCKET
 OBJECT_STORAGE_ACCESS_KEY_ID
 OBJECT_STORAGE_SECRET_ACCESS_KEY
+OBJECT_STORAGE_FORCE_PATH_STYLE
 AUTH_SECRET / OIDC settings
 OTEL_EXPORTER_OTLP_ENDPOINT
 SENTRY_DSN
@@ -213,6 +215,19 @@ SENTRY_DSN
 
 Namespace credentials per adapter, such as `SOURCE_TCAD_*`. Never place source tokens in a shared browser-visible `NEXT_PUBLIC_*` variable. Rotate provider credentials independently and record owner/expiry in an external secret inventory.
 
+For a Railway bucket displayed as `raw-artifacts`, map its native references only into acquisition services:
+
+```text
+OBJECT_STORAGE_BUCKET=${{raw-artifacts.BUCKET}}
+OBJECT_STORAGE_ACCESS_KEY_ID=${{raw-artifacts.ACCESS_KEY_ID}}
+OBJECT_STORAGE_SECRET_ACCESS_KEY=${{raw-artifacts.SECRET_ACCESS_KEY}}
+OBJECT_STORAGE_REGION=${{raw-artifacts.REGION}}
+OBJECT_STORAGE_ENDPOINT=${{raw-artifacts.ENDPOINT}}
+OBJECT_STORAGE_FORCE_PATH_STYLE=false
+```
+
+Railway buckets are private, S3-compatible, region-fixed, and isolated by environment. As of the research cutoff they do not support server-side encryption controls, object versioning, object lock, lifecycle configuration, or native bucket backups. Content-addressed create-only writes and an external verified copy are required; do not describe a native bucket as immutable storage by itself.
+
 ### Engagement variables
 
 Only API and `worker-engagement` receive the engagement policy ID, contact encryption/HMAC keys, approved provider credentials, sender identity, webhook secret, calendar settings, and secure-upload credentials. Web, discovery, enrichment, scheduler, and alert-delivery processes do not. `OUTREACH_MODE` is `disabled`, `log_only`, or `active`; `active` still requires channel-specific enablement plus server-side identity, preflight, approval, and suppression checks.
@@ -221,7 +236,7 @@ Only API and `worker-engagement` receive the engagement policy ID, contact encry
 
 1. Deploy the Railway PostGIS template into `staging`.
 2. Replace any floating image reference with a tested stable tag/digest.
-3. Attach the required persistent volume at the documented Postgres data path.
+3. For the initial `postgis/postgis:17-3.5` service, mount the volume at `/var/lib/postgresql/data` and set `PGDATA=/var/lib/postgresql/data/pgdata`; the volume root contains `lost+found` and cannot itself be initialized as the database directory.
 4. Keep it private.
 5. Create a least-privilege application role and a separate migration role.
 6. Run an idempotent baseline migration that verifies required extensions (`postgis` and only explicitly approved additions).

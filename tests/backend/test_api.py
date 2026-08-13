@@ -21,6 +21,7 @@ def test_readiness_checks_composed_modules(client: TestClient) -> None:
         "checks": {
             "configuration": "ok",
             "registry": "ok",
+            "source_registry": "ok",
             "candidate_read_model": "ok",
             "engagement_guard": "ok",
         },
@@ -34,7 +35,13 @@ def test_version_declares_bounded_contexts(client: TestClient) -> None:
     payload = response.json()
     assert payload["version"] == "0.1.0"
     assert payload["api_version"] == "v1"
-    assert payload["modules"] == ["platform", "registry", "identity", "engagement"]
+    assert payload["modules"] == [
+        "platform",
+        "registry",
+        "identity",
+        "engagement",
+        "acquisition",
+    ]
 
 
 def test_capabilities_fail_closed_by_default(client: TestClient) -> None:

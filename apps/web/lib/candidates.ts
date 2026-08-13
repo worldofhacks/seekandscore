@@ -640,6 +640,27 @@ export const topQueueSnapshot: TopQueueSnapshot = {
   asOf: "2026-08-12T07:30:00-05:00",
   modelVersion: "central-texas-v1 · draft",
   isSynthetic: true,
+  provenance: {
+    mode: "synthetic",
+    status: "synthetic",
+    retrievedAt: "2026-08-12T12:30:00Z",
+    publishedAt: "2026-08-12T12:30:00Z",
+    staleAfter: null,
+    isFallback: true,
+    fallbackReason: "The live candidate API is not configured for this workspace.",
+    sources: [
+      {
+        id: "bundled-central-texas-fixture",
+        name: "Bundled Central Texas deterministic fixture",
+        status: "current",
+        retrievedAt: "2026-08-12T12:30:00Z",
+        publishedAt: "2026-08-12T12:30:00Z",
+        recordCount: seeds.length,
+        detail: "Fictional records used for product and contract validation.",
+      },
+    ],
+    warnings: ["No production property or contact data is present."],
+  },
   candidates: seeds.map(makeCandidate),
 };
 

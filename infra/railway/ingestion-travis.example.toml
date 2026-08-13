@@ -1,0 +1,19 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/worker.Dockerfile"
+watchPatterns = [
+  "services/worker/**",
+  "python/seekandscore/**",
+  "config/ingestion/**",
+  "config/regions/us/tx/central-texas/**",
+  "migrations/**",
+  "pyproject.toml",
+  "uv.lock",
+  "infra/docker/worker.Dockerfile",
+  "infra/railway/ingestion-travis.example.toml",
+  "scripts/runtime/python-entrypoint.sh"
+]
+
+[deploy]
+startCommand = "/app/scripts/runtime/python-entrypoint.sh python -m seekandscore.ingestion run --source travis_tcad_parcels"
+restartPolicyType = "NEVER"

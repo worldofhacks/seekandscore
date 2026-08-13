@@ -40,6 +40,39 @@ class EvidenceSummary(BaseModel):
     freshness: str
 
 
+class SourceObservationFields(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    market_value_cents: int | None = Field(default=None, ge=0)
+    appraised_value_cents: int | None = Field(default=None, ge=0)
+    assessed_value_cents: int | None = Field(default=None, ge=0)
+    land_value_cents: int | None = Field(default=None, ge=0)
+    improvement_value_cents: int | None = Field(default=None, ge=0)
+    acreage: float | None = Field(default=None, gt=0)
+
+
+class SourceObservation(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_id: str
+    source_record_id: str
+    artifact_sha256: str
+    retrieved_at: datetime
+    fields: SourceObservationFields
+
+
+class CandidateSourceSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    name: str
+    status: str
+    retrieved_at: datetime | None = None
+    published_at: datetime | None = None
+    record_count: int | None = Field(default=None, ge=0)
+    detail: str | None = None
+
+
 class CandidateReadModel(BaseModel):
     """API projection; synthetic fixtures contain no owner or contact data."""
 
@@ -72,6 +105,8 @@ class CandidateReadModel(BaseModel):
     as_of: datetime
     synthetic: bool = True
     read_model_version: str = READ_MODEL_VERSION
+    screening_only: bool = False
+    source_observation: SourceObservation | None = None
 
 
 class CandidatePage(BaseModel):
@@ -81,6 +116,13 @@ class CandidatePage(BaseModel):
     next_cursor: str | None
     total: int = Field(ge=0)
     dataset_mode: str
+    dataset_status: str = "synthetic"
+    retrieved_at: datetime | None = None
+    published_at: datetime | None = None
+    stale_after: datetime | None = None
+    partial: bool = False
+    sources: tuple[CandidateSourceSummary, ...] = ()
+    warnings: tuple[str, ...] = ()
     read_model_version: str = READ_MODEL_VERSION
 
 
@@ -108,6 +150,12 @@ class SyntheticCandidateRepository:
             next_cursor=next_cursor,
             total=len(self._items),
             dataset_mode=dataset_mode,
+            dataset_status="synthetic" if dataset_mode == "synthetic" else "fallback",
+            warnings=(
+                ()
+                if dataset_mode == "synthetic"
+                else ("Live mode has no candidate projection; serving labeled synthetic data.",)
+            ),
         )
 
     def get(self, candidate_id: UUID) -> CandidateReadModel | None:
@@ -144,7 +192,7 @@ def _build_items(geography: InMemoryGeographyRegistry) -> tuple[CandidateReadMod
                 display_name="Synthetic East Austin infill parcel",
                 kind=CandidateKind.PARCEL,
                 parcel_count=1,
-                jurisdiction_id="us-tx-453",
+                jurisdiction_id="us-tx-travis",
             ),
             "infill",
             1,
@@ -169,7 +217,7 @@ def _build_items(geography: InMemoryGeographyRegistry) -> tuple[CandidateReadMod
                 display_name="Synthetic Bastrop growth parcel",
                 kind=CandidateKind.PARCEL,
                 parcel_count=1,
-                jurisdiction_id="us-tx-021",
+                jurisdiction_id="us-tx-bastrop",
             ),
             "land-banking",
             2,
@@ -194,7 +242,7 @@ def _build_items(geography: InMemoryGeographyRegistry) -> tuple[CandidateReadMod
                 display_name="Synthetic Caldwell County assemblage",
                 kind=CandidateKind.ASSEMBLAGE,
                 parcel_count=3,
-                jurisdiction_id="us-tx-055",
+                jurisdiction_id="us-tx-caldwell",
             ),
             "assemblage",
             3,

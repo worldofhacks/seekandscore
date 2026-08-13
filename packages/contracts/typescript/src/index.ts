@@ -1,4 +1,5 @@
 export type CandidateStrategy =
+  | "Parcel screening"
   | "Buildable land"
   | "Lifestyle"
   | "Distress"
@@ -20,6 +21,19 @@ export type EvidenceStatus =
 export type RiskSeverity = "critical" | "elevated" | "watch";
 
 export type OutreachGateStatus = "blocked" | "needs_review" | "ready";
+
+export type DatasetMode = "live" | "synthetic" | "mixed" | "unknown";
+
+export type DatasetHealthStatus =
+  | "synthetic"
+  | "current"
+  | "stale"
+  | "partial"
+  | "error"
+  | "fallback"
+  | "unknown";
+
+export type DataSourceStatus = "current" | "stale" | "error" | "unavailable" | "unknown";
 
 export interface MoneyRange {
   low: number;
@@ -72,6 +86,47 @@ export interface CandidateSummary {
   risks: CandidateRisk[];
   evidence: EvidenceDatum[];
   outreachGate: OutreachGate;
+  screeningOnly?: boolean;
+  sourceObservation?: SourceObservation;
+}
+
+export interface SourceObservationFields {
+  marketValueCents?: number;
+  appraisedValueCents?: number;
+  assessedValueCents?: number;
+  landValueCents?: number;
+  improvementValueCents?: number;
+  acreage?: number;
+}
+
+export interface SourceObservation {
+  sourceId: string;
+  sourceRecordId: string;
+  artifactSha256: string;
+  retrievedAt: string;
+  fields: SourceObservationFields;
+}
+
+export interface DataSourceProvenance {
+  id: string;
+  name: string;
+  status: DataSourceStatus;
+  retrievedAt: string | null;
+  publishedAt: string | null;
+  recordCount: number | null;
+  detail?: string;
+}
+
+export interface DatasetProvenance {
+  mode: DatasetMode;
+  status: DatasetHealthStatus;
+  retrievedAt: string | null;
+  publishedAt: string | null;
+  staleAfter: string | null;
+  isFallback: boolean;
+  fallbackReason: string | null;
+  sources: DataSourceProvenance[];
+  warnings: string[];
 }
 
 export interface TopQueueSnapshot {
@@ -79,9 +134,10 @@ export interface TopQueueSnapshot {
   label: string;
   region: string;
   timeZone: string;
-  asOf: string;
+  asOf: string | null;
   modelVersion: string;
   isSynthetic: boolean;
+  provenance: DatasetProvenance;
   candidates: CandidateSummary[];
 }
 
@@ -120,6 +176,36 @@ export interface ApiCandidateReadModel {
   as_of: string;
   synthetic: boolean;
   read_model_version: string;
+  screening_only?: boolean;
+  source_observation?: {
+    source_id: string;
+    source_record_id: string;
+    artifact_sha256: string;
+    retrieved_at: string;
+    fields?: {
+      market_value_cents?: number;
+      appraised_value_cents?: number;
+      assessed_value_cents?: number;
+      land_value_cents?: number;
+      improvement_value_cents?: number;
+      acreage?: number;
+    };
+    market_value_cents?: number;
+    appraised_value_cents?: number;
+    assessed_value_cents?: number;
+    land_value_cents?: number;
+    improvement_value_cents?: number;
+  };
+}
+
+export interface ApiDataSourceProvenance {
+  id: string;
+  name: string;
+  status: DataSourceStatus;
+  retrieved_at?: string | null;
+  published_at?: string | null;
+  record_count?: number | null;
+  detail?: string;
 }
 
 export interface ApiCandidatePage {
@@ -128,6 +214,13 @@ export interface ApiCandidatePage {
   total: number;
   dataset_mode: string;
   read_model_version: string;
+  dataset_status?: DatasetHealthStatus;
+  retrieved_at?: string | null;
+  published_at?: string | null;
+  stale_after?: string | null;
+  partial?: boolean;
+  sources?: ApiDataSourceProvenance[];
+  warnings?: string[];
 }
 
 export type QueueFilter = "all" | "new" | "moved" | "needs_review";

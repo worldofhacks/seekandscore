@@ -5,6 +5,7 @@ watchPatterns = [
   "services/worker/**",
   "python/seekandscore/**",
   "config/regions/**",
+  "config/ingestion/**",
   "pyproject.toml",
   "uv.lock",
   "infra/docker/worker.Dockerfile",

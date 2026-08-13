@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install check lint test build infra-up infra-down infra-logs infra-status app-up compose-config config-check secret-check
+.PHONY: help install check lint test build infra-up infra-down infra-logs infra-status app-up ingestion-check ingestion-run-local compose-config config-check secret-check
 
 help: ## List common development commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "%-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -43,6 +43,12 @@ infra-status: ## Show local service status.
 
 app-up: ## Build and start the full local stack with safe defaults.
 	docker compose --profile app up --build
+
+ingestion-check: ## Check ingestion gates without acquiring source data.
+	APP_ENV=development DATASET_MODE=synthetic INGESTION_ENABLED=false uv run python -m seekandscore.ingestion check
+
+ingestion-run-local: ## Run the bounded local job; required live gates come only from the caller.
+	docker compose --profile ingestion run --rm -e APP_ENV -e DATASET_MODE -e INGESTION_ENABLED -e INGESTION_ACTIVATION_ID ingestion-travis
 
 compose-config: ## Validate and render the Compose model.
 	docker compose config --quiet

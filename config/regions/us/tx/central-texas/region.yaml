@@ -34,6 +34,7 @@ rollout:
     - scoring_profile_approved
 
 scoring_profile: central-texas-v1
+ingestion_profile: us-tx-central-texas-v1
 
 outreach:
   mode: disabled_pending_review
@@ -67,12 +68,12 @@ reference_areas:
     geometry_ref: registry://areas/us-tx-central-texas/q2-domain-corridor/v1
 
 sources:
-  - id: travis_assessor
+  - id: travis_tcad_parcels
     capability: assessor_parcel
     jurisdiction: us-tx-travis
-    adapter: null
-    policy_ref: null
-    status: planned
+    adapter: arcgis_feature_layer_v1
+    policy_ref: config/ingestion/us-tx-central-texas-v1.yaml#travis_tcad_parcels
+    status: rights_review
     schedule: null
   - id: bastrop_assessor
     capability: assessor_parcel
@@ -120,8 +121,8 @@ sources:
     capability: opportunity_zone
     jurisdiction: US
     adapter: null
-    policy_ref: null
-    status: planned
+    policy_ref: config/ingestion/us-tx-central-texas-v1.yaml#federal_qoz_2018_designations
+    status: implementation_blocked
     schedule: null
 
 compliance_notes:

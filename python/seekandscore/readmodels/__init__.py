@@ -5,5 +5,11 @@ from seekandscore.readmodels.candidates import (
     CandidateReadModel,
     SyntheticCandidateRepository,
 )
+from seekandscore.readmodels.live_candidates import LiveCandidateRepository
 
-__all__ = ["CandidatePage", "CandidateReadModel", "SyntheticCandidateRepository"]
+__all__ = [
+    "CandidatePage",
+    "CandidateReadModel",
+    "LiveCandidateRepository",
+    "SyntheticCandidateRepository",
+]

@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from seekandscore.api.routes.candidates import router as candidates_router
+from seekandscore.api.routes.sources import router as sources_router
 from seekandscore.api.routes.system import router as system_router
 from seekandscore.bootstrap import AppContainer
 from seekandscore.platform.settings import Settings, get_settings
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.container = container
     application.include_router(system_router)
     application.include_router(candidates_router, prefix=f"/{API_VERSION}")
+    application.include_router(sources_router, prefix=f"/{API_VERSION}")
 
     @application.exception_handler(HTTPException)
     async def http_problem(request: Request, error: HTTPException) -> JSONResponse:

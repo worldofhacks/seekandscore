@@ -1,0 +1,151 @@
+schema_version: 1
+id: us-tx-central-texas-v1
+region_id: us-tx-central-texas
+status: development
+default_enabled: false
+
+# Repository configuration can describe a live source, but it cannot activate one.
+# Activation remains an environment-level, reviewed action with all gates below.
+activation:
+  required_environment: [staging, production]
+  required_dataset_mode: live
+  required_runtime_flags:
+    INGESTION_ENABLED: "true"
+    INGESTION_ACTIVATION_ID: non_empty_review_record
+  required_reviews:
+    - source_rights_approved
+    - sample_schema_reviewed
+    - immutable_artifact_storage_verified
+    - replay_and_idempotency_verified
+  kill_switch: INGESTION_ENABLED
+
+artifact_policy:
+  persist_before_parse: true
+  content_address: sha256
+  overwrite_existing_keys: false
+  required_metadata:
+    - source_id
+    - original_uri
+    - retrieved_at
+    - sha256
+    - media_type
+    - adapter_version
+    - config_version
+    - rights_review_id
+  key_template: raw-artifacts/{source_id}/{sha256_prefix_2}/{sha256}.json
+  external_backup_required: true
+
+sources:
+  - id: travis_tcad_parcels
+    capability: assessor_parcel
+    jurisdiction: us-tx-travis
+    authority: Travis County Transportation and Natural Resources / Travis Central Appraisal District
+    status: rights_review
+    enabled: false
+    adapter: arcgis_feature_layer_v1
+    authority_level: official_derivative
+    publication_cadence: monthly
+    intended_schedule:
+      cron_utc: "17 9 2 * *"
+      state: disabled_until_activation
+    staging_cohort:
+      purpose: airport_and_east_growth_research
+      cities: [DEL VALLE, MANOR]
+      observed_matching_records: 953
+      observed_at: "2026-08-13"
+      page_size: 250
+      max_records: 1000
+      state: disabled_until_activation
+    endpoints:
+      service: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer
+      layer: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0
+      query: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0/query
+    upstream_contract:
+      geometry_type: esriGeometryPolygon
+      source_spatial_reference: 2277
+      supported_query_formats: [json, geojson, pbf]
+      provider_max_record_count: 1000
+      pagination_supported: true
+      copyright_text: Travis Central Appraisal District
+    field_policy:
+      collect_owner_or_contact_fields: false
+      explicitly_excluded_fields: [py_owner_id, py_owner_name, py_address]
+      notes:
+        - The first feed is parcel/site intelligence, not an owner-contact acquisition feed.
+        - Outreach identity and contact sourcing require their own reviewed source and purpose.
+    bounded_fetch:
+      default_page_size: 250
+      maximum_page_size: 1000
+      default_max_records_per_run: 250
+      hard_max_records_per_run: 10000
+      max_concurrency: 1
+      request_timeout_seconds: 30
+      minimum_delay_milliseconds: 1000
+      user_agent: SeekAndScore/0.1 (+https://github.com/worldofhacks/seekandscore; source-ingestion)
+      retry_attempts: 3
+      hard_max_retry_attempts: 5
+      retry_statuses: [429, 500, 502, 503, 504]
+      honor_retry_after: true
+      default_where: PROP_ID IS NOT NULL AND tcad_acres >= 1
+      default_order_by: OBJECTID ASC
+      allowed_city_filters: [AUSTIN, MANOR, DEL VALLE]
+      arbitrary_out_fields_allowed: false
+      arbitrary_order_by_allowed: false
+    rights:
+      review_status: rights_review
+      access_page: https://gis.traviscountytx.gov/server1/rest/services/Boundaries_and_Jurisdictions/TCAD/MapServer/0
+      public_records_context: https://www.traviscountytx.gov/tnr/tnr-open-records
+      retention_allowed: unknown
+      internal_use_allowed: unknown
+      display_allowed: unknown
+      export_allowed: unknown
+      redistribution_allowed: unknown
+      attribution_required: true
+      notes:
+        - A queryable official endpoint is not, by itself, approval for bulk automated reuse.
+        - TCAD separately prohibits data mining on its map-download page; resolve applicability before activation.
+
+  - id: federal_qoz_2018_designations
+    capability: opportunity_zone
+    jurisdiction: US
+    authority: U.S. Department of the Treasury CDFI Fund
+    status: implementation_blocked
+    enabled: false
+    adapter: null
+    endpoints:
+      landing_page: https://www.cdfifund.gov/opportunity-zones
+      spreadsheet: https://www.cdfifund.gov/system/files/documents/designated-qozs.12.14.18.xlsx
+      shapefile: https://www.cdfifund.gov/system/files/documents/opportunity-zones%3D8764.-9-10-2019.zip
+    activation_blockers:
+      - Freeze and load the matching 2010 Census tract geometry.
+      - Implement temporal designation facts and boundary-quality checks.
+      - Verify membership against IRS Notices 2018-48 and 2019-42.
+
+  - id: federal_qoz_2027_eligible_tracts
+    capability: opportunity_zone_candidate
+    jurisdiction: US
+    authority: U.S. Department of the Treasury
+    status: reference_only
+    enabled: false
+    adapter: null
+    endpoints:
+      landing_page: https://home.treasury.gov/policy-issues/tax-policy/data-transparency/qualified-opportunity-zones
+      spreadsheet: https://home.treasury.gov/system/files/131/OZ2-Eligible-LIC-Tracts-Data-Transparency-03232026.xlsx
+    semantic_guard: Eligibility for nomination is not designation or current QOZ status.
+
+  - id: texas_qoz_2027_nomination_lifecycle
+    capability: opportunity_zone_nomination
+    jurisdiction: us-tx
+    authority: Office of the Texas Governor, Economic Development and Tourism
+    status: reference_only
+    enabled: false
+    adapter: null
+    endpoints:
+      lifecycle_page: https://gov.texas.gov/business/page/opportunity-zones
+      eligible_tracts_workbook: https://gov.texas.gov/uploads/files/business/Texas_OZ_Eligible.xlsx
+    cutoff_observation:
+      observed_at: "2026-08-13"
+      state_submission_target: "2026-08-17"
+      treasury_certification_expected: "2026-11-28"
+      published_state_nomination_list_found: false
+    semantic_guard: State process or nomination is not Treasury certification or effective designation.

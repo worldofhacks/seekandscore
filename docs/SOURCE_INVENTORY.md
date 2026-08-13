@@ -17,10 +17,10 @@ This is the Phase 0 control document, not permission to automate any source. A s
 
 | Jurisdiction | Capability | Candidate authority/source | MVP mechanism | Status | Primary unknown |
 |---|---|---|---|---|---|
-| Travis | assessor/parcel | Travis Central Appraisal District | official bulk/API/export preferred | discovery | bulk availability, geometry, terms |
-| Bastrop | assessor/parcel | Bastrop Central Appraisal District | official bulk/API/export preferred | discovery | fields, geometry, cadence, terms |
-| Caldwell | assessor/parcel | Caldwell County Appraisal District | official bulk/API/export preferred | discovery | fields, geometry, cadence, terms |
-| Travis | tax delinquency/foreclosure | Travis County Tax Office | official published files/pages | discovery | format/history/retention |
+| Travis | assessor/parcel | Travis County TNR monthly TCAD ArcGIS layer | bounded paginated query | rights_review | automated reuse, retention/display/export rights |
+| Bastrop | assessor/parcel | Bastrop CAD official certified/GIS ZIPs | official bulk download after disclaimer | rights_review | disclaimer scope, retention/display/export rights |
+| Caldwell | assessor/parcel | Caldwell CAD annual public exports | official bulk download | rights_review | retention/display/export rights, geometry |
+| Travis | tax delinquency/foreclosure | Travis County Tax Office daily CSV and sale pages | official bulk file; sale page later | rights_review | retention/display rights, event withdrawal/history |
 | Bastrop | tax delinquency/foreclosure | county tax authority/sale authority | to determine | discovery | authority and publication method |
 | Caldwell | tax delinquency/foreclosure | county tax authority/sale authority | to determine | discovery | authority and publication method |
 | Travis | civil tax/real-estate cases | District Clerk | manual flag/import first | discovery | automation terms/access/document rights |
@@ -31,13 +31,15 @@ This is the Phase 0 control document, not permission to automate any source. A s
 | launch counties | active listings | licensed feed/provider | manual import until selected | blocked | provider, contract, price, display rights |
 | launch counties | sold comparables | licensed/public sources | manual/approved provider | blocked | Texas nondisclosure and licensing |
 | federal/local | parcel geometry | CAD/county/local GIS | official download/service | discovery | authority, vintage, completeness |
-| federal | flood | FEMA NFHL/products | official download/service | discovery | effective-layer update process |
-| federal | Opportunity Zones | IRS/Treasury + Census geometry | official files | discovery | 2027 final publication lifecycle |
+| federal | flood | FEMA NFHL/Map Service Center | official bulk download/service | discovery | effective-layer update process and version tests |
+| federal | Opportunity Zones | IRS/Treasury/CDFI + vintage-correct Census geometry | official files | discovery | 2010 join implementation and 2027 final publication lifecycle |
 | local | zoning/city/ETJ | municipal/county GIS/planning | later/where authoritative | discovery | semantics, completeness, updates |
 | local/state/federal | wildfire/wetlands/elevation | official agencies | later phase | discovery | layer selection and screening limits |
 | local | roads/access/utilities | transport/local utility/planning | evidence signals only | discovery | legal-access versus physical-road distinction |
 
 ## Required source record
+
+Exact researched endpoints and the first bounded operational contract are maintained in [`LIVE_INGESTION_RUNBOOK.md`](LIVE_INGESTION_RUNBOOK.md) and `config/ingestion/us-tx-central-texas-v1.yaml`.
 
 Create one source-policy record containing:
 

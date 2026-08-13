@@ -2,7 +2,7 @@
 
 Seek and Score is a planning-first, explainable property-intelligence platform for discovering, underwriting, and ranking real-estate investment opportunities. Central Texas is the launch market; the architecture is intentionally designed to add county-by-county data adapters and Opportunity Zone cohorts across the United States without forking the core product.
 
-> Status: Milestone 1 foundation. A synthetic-only operator console, API, workers, database migrations, local infrastructure, CI, and Railway deployment templates are runnable. Live data ingestion, automated outreach, and production investment recommendations remain disabled.
+> Status: Milestone 1 foundation plus the first fail-closed live-data slice. The operator console, API, workers, database migrations, local infrastructure, CI, and Railway deployment templates are runnable. A bounded Travis County parcel connector can acquire private shadow observations only after explicit activation; public live display, automated outreach, and production investment recommendations remain disabled.
 
 ## North-star outcome
 
@@ -70,9 +70,10 @@ The foundation slice is intentionally useful without implying that the product i
 - Alembic foundations for the registry, identity, engagement, and platform schemas;
 - worker and scheduler entrypoints with inert defaults;
 - PostGIS, Redis, and private MinIO services for local development;
+- a bounded Travis County TNR/TCAD parcel adapter with immutable raw artifacts, replay-safe observations, freshness/provenance status, and an independent public-display gate;
 - non-root production containers, continuous integration, configuration validation, and credential scanning.
 
-The web application prefers the API when `API_BASE_URL` is set and healthy. It falls back to an explicitly labeled synthetic fixture when the API is unavailable, so a preview never silently turns into a live-data product.
+The web application prefers the API when `API_BASE_URL` is set and healthy. It falls back to an explicitly labeled synthetic fixture when the API is unavailable, so a preview never silently turns into a live-data product. See the [live ingestion runbook](docs/LIVE_INGESTION_RUNBOOK.md) for the reviewed cohort, activation gates, source limitations, and Railway proof procedure.
 
 ## Quick start
 
@@ -100,6 +101,7 @@ For local persistence services, use `make infra-up`. To build and run the comple
 - [System architecture](docs/ARCHITECTURE.md) — bounded contexts, data flow, contracts, deployment units, and scale path
 - [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.md) — cohort-aware model and authoritative data hierarchy
 - [Railway deployment plan](docs/RAILWAY_DEPLOYMENT.md) — service topology, environments, migrations, backups, and production caveats
+- [Live ingestion runbook](docs/LIVE_INGESTION_RUNBOOK.md) — official source register, bounded acquisition contract, rights gates, and staged rollout
 - [Delivery roadmap](docs/ROADMAP.md) — epics and milestone sequence
 - [Product definition](docs/PRODUCT_DEFINITION.md) — users, strategies, workflows, and success measures
 - [Owner and representative outreach](docs/OUTREACH_WORKFLOW.md) — party resolution, policy preflight, communication, scheduling, and information requests
@@ -151,7 +153,7 @@ Source adapters, regional packs, scoring configurations, and live provider integ
 
 Railway hosts the stateless web/API/worker processes and can host the initial Redis/PostGIS services. The MVP can use a single Railway PostGIS node with tested backups. Railway's native PostgreSQL high-availability conversion does not support the community PostGIS image, so production scale has an explicit decision gate: accept the documented single-node risk or move PostGIS to a managed HA provider while leaving the applications on Railway.
 
-The initial staging release deploys only synthetic application behavior with ingestion and outreach disabled. Database-backed ingestion is activated only after the PostGIS backup/restore path and source rights are verified; provider outreach remains a separate production activation decision.
+The public staging application remains synthetic while a separately activated acquisition job can populate a private shadow dataset. Database-backed public display is activated only after the PostGIS backup/restore path and source display rights are verified; provider outreach remains a separate production activation decision.
 
 ## Important boundaries
 

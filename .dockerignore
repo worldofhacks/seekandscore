@@ -17,6 +17,7 @@ dist
 out
 data/raw
 data/processed
+var/raw-artifacts
 *.gpkg
 *.geojson
 *.shp

@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 
 import type {
   CandidateSummary,
+  DataSourceProvenance,
+  DatasetHealthStatus,
   EvidenceStatus,
   QueueFilter,
   TopQueueSnapshot,
@@ -27,6 +29,7 @@ import {
   rankMovement,
 } from "@/lib/candidates";
 import { formatAsOf, formatObserved } from "@/lib/dates";
+import { candidateScoreLabel, candidateValueDisplay } from "@/lib/presentation";
 
 const filters: Array<{ id: QueueFilter; label: string }> = [
   { id: "all", label: "All" },
@@ -43,10 +46,206 @@ const evidenceLabels: Record<EvidenceStatus, string> = {
   unknown: "Unknown",
 };
 
-function ScoreRing({ score }: { score: number }) {
+const datasetStatusLabels: Record<DatasetHealthStatus, string> = {
+  synthetic: "Synthetic",
+  current: "Current",
+  stale: "Stale",
+  partial: "Partial",
+  error: "Error",
+  fallback: "Fallback",
+  unknown: "Unknown",
+};
+
+function datasetModeLabel(snapshot: TopQueueSnapshot): string {
+  if (snapshot.provenance.isFallback) return "Synthetic fallback";
+  if (snapshot.provenance.mode === "live") return "Live data";
+  if (snapshot.provenance.mode === "mixed") return "Mixed data";
+  if (snapshot.provenance.mode === "synthetic") return "Synthetic data";
+  return "Dataset unknown";
+}
+
+function statusTone(status: DatasetHealthStatus): "accent" | "outline" | "blocked" {
+  if (status === "current") return "accent";
+  if (status === "error" || status === "fallback") return "blocked";
+  return "outline";
+}
+
+function SourceRow({ source, timeZone }: { source: DataSourceProvenance; timeZone: string }) {
+  return (
+    <li>
+      <div>
+        <strong>{source.name}</strong>
+        <span>{source.id}</span>
+      </div>
+      <div className="source-provenance__status">
+        <Badge tone={source.status === "current" ? "accent" : "outline"}>
+          {source.status}
+        </Badge>
+        <span>
+          {source.retrievedAt ? (
+            <>
+              Retrieved{" "}
+              <time dateTime={source.retrievedAt}>
+                {formatAsOf(source.retrievedAt, timeZone)}
+              </time>
+            </>
+          ) : (
+            "Retrieval time not supplied"
+          )}
+        </span>
+      </div>
+      <dl>
+        <div>
+          <dt>Published</dt>
+          <dd>
+            {source.publishedAt ? (
+              <time dateTime={source.publishedAt}>{formatAsOf(source.publishedAt, timeZone)}</time>
+            ) : (
+              "Not supplied"
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Records</dt>
+          <dd>{source.recordCount?.toLocaleString("en-US") ?? "Not supplied"}</dd>
+        </div>
+      </dl>
+      {source.detail ? <p>{source.detail}</p> : null}
+    </li>
+  );
+}
+
+function DataProvenancePanel({ snapshot }: { snapshot: TopQueueSnapshot }) {
+  const { provenance } = snapshot;
+  const primarySource = provenance.sources[0];
+  const needsAttention = ["stale", "partial", "error", "fallback", "unknown"].includes(
+    provenance.status,
+  );
+  const heading = provenance.isFallback
+    ? "Live data unavailable — showing a synthetic fallback"
+    : provenance.status === "error"
+      ? "The requested dataset is unavailable"
+      : provenance.status === "partial"
+        ? "This dataset is only partially available"
+        : provenance.status === "stale"
+          ? "This dataset is outside its freshness target"
+          : provenance.mode === "live"
+            ? "Live source-backed parcel data"
+            : "Synthetic data for product validation";
+
+  return (
+    <section
+      aria-labelledby="data-provenance-heading"
+      className={`data-provenance data-provenance--${provenance.status}`}
+      id="source-health"
+    >
+      <div className="data-provenance__summary">
+        <span aria-hidden="true" className="data-provenance__icon">
+          {needsAttention ? <AlertIcon /> : <CheckIcon />}
+        </span>
+        <div>
+          <div className="data-provenance__badges">
+            <Badge
+              tone={
+                provenance.mode === "live" && !provenance.isFallback ? "accent" : "outline"
+              }
+            >
+              {datasetModeLabel(snapshot)}
+            </Badge>
+            <Badge tone={statusTone(provenance.status)}>
+              {datasetStatusLabels[provenance.status]}
+            </Badge>
+          </div>
+          <h2 id="data-provenance-heading">{heading}</h2>
+          <p>
+            {provenance.fallbackReason ??
+              provenance.warnings[0] ??
+              "Review source dates and evidence before acting on any screening result."}
+          </p>
+        </div>
+      </div>
+
+      <dl className="data-provenance__facts">
+        <div>
+          <dt>Primary source</dt>
+          <dd>{primarySource?.name ?? "Source metadata not supplied"}</dd>
+        </div>
+        <div>
+          <dt>Retrieved</dt>
+          <dd>
+            {provenance.retrievedAt ? (
+              <time dateTime={provenance.retrievedAt}>
+                {formatAsOf(provenance.retrievedAt, snapshot.timeZone)}
+              </time>
+            ) : (
+              "Not supplied"
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Published</dt>
+          <dd>
+            {provenance.publishedAt ? (
+              <time dateTime={provenance.publishedAt}>
+                {formatAsOf(provenance.publishedAt, snapshot.timeZone)}
+              </time>
+            ) : (
+              "Not supplied"
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Fresh through</dt>
+          <dd>
+            {provenance.staleAfter ? (
+              <time dateTime={provenance.staleAfter}>
+                {formatAsOf(provenance.staleAfter, snapshot.timeZone)}
+              </time>
+            ) : (
+              "No threshold supplied"
+            )}
+          </dd>
+        </div>
+      </dl>
+
+      {provenance.sources.length ? (
+        <details className="source-provenance">
+          <summary>
+            Source provenance
+            <span>{provenance.sources.length}</span>
+          </summary>
+          <ul>
+            {provenance.sources.map((source) => (
+              <SourceRow key={source.id} source={source} timeZone={snapshot.timeZone} />
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {provenance.warnings.length > 1 ? (
+        <ul aria-label="Dataset warnings" className="data-provenance__warnings">
+          {provenance.warnings.slice(1).map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      {snapshot.candidates.some((candidate) => candidate.screeningOnly) ? (
+        <p className="data-provenance__screening-note">
+          <strong>Research-only screen.</strong> Assessed or appraised values are source
+          observations—not offers, acquisition basis, or independent valuations. Screening
+          scores do not verify buildability, Opportunity Zone status, ownership, or contact
+          authority.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function ScoreRing({ score, label = "Overall score" }: { score: number; label?: string }) {
   return (
     <span
-      aria-label={`Overall score ${score.toFixed(1)} out of 100`}
+      aria-label={`${label} ${score.toFixed(1)} out of 100`}
       className="score-ring"
       style={{ "--score": `${score * 3.6}deg` } as React.CSSProperties}
     >
@@ -110,7 +309,7 @@ function QueueTable({
             <th scope="col">Rank</th>
             <th scope="col">Candidate</th>
             <th scope="col">Strategy</th>
-            <th scope="col">Value range</th>
+            <th scope="col">Value evidence</th>
             <th scope="col">Score</th>
             <th scope="col">Move</th>
             <th scope="col">
@@ -121,6 +320,7 @@ function QueueTable({
         <tbody>
           {candidates.map((candidate) => {
             const selected = candidate.id === selectedId;
+            const valueDisplay = candidateValueDisplay(candidate);
             return (
               <tr className={selected ? "is-selected" : undefined} key={candidate.id}>
                 <td className="queue-table__rank">
@@ -144,15 +344,16 @@ function QueueTable({
                 </td>
                 <td>
                   <span className="value-range">
-                    {formatMoneyCompact(candidate.valueRange.low)}–
-                    {formatMoneyCompact(candidate.valueRange.high)}
+                    {valueDisplay.value}
                   </span>
-                  <span className="cell-subline">Basis {formatMoneyCompact(candidate.likelyBasis)}</span>
+                  <span className="cell-subline">{valueDisplay.subline}</span>
                 </td>
                 <td>
                   <div className="score-cell">
                     <strong>{candidate.overallScore.toFixed(1)}</strong>
-                    <span>{Math.round(candidate.confidence * 100)}% conf.</span>
+                    <span>
+                      {candidate.screeningOnly ? "screen" : `${Math.round(candidate.confidence * 100)}% conf.`}
+                    </span>
                   </div>
                 </td>
                 <td>
@@ -182,6 +383,7 @@ function EvidencePanel({
   candidate: CandidateSummary;
   timeZone: string;
 }) {
+  const valueDisplay = candidateValueDisplay(candidate);
   return (
     <div className="detail-panel__content" id="evidence-content" role="tabpanel">
       <section className="decision-read" aria-labelledby="decision-read-heading">
@@ -193,21 +395,27 @@ function EvidencePanel({
 
         <dl className="decision-stats">
           <div>
-            <dt>Value range</dt>
+            <dt>{valueDisplay.label}</dt>
+            <dd>{valueDisplay.value}</dd>
+          </div>
+          <div>
+            <dt>{candidate.screeningOnly ? "Use" : "Scenario basis"}</dt>
             <dd>
-              {formatMoneyCompact(candidate.valueRange.low)}–
-              {formatMoneyCompact(candidate.valueRange.high)}
+              {candidate.screeningOnly
+                ? "Research only"
+                : formatMoneyCompact(candidate.likelyBasis)}
             </dd>
           </div>
           <div>
-            <dt>Likely basis</dt>
-            <dd>{formatMoneyCompact(candidate.likelyBasis)}</dd>
-          </div>
-          <div>
-            <dt>Confidence</dt>
-            <dd>{Math.round(candidate.confidence * 100)}%</dd>
+            <dt>{candidateScoreLabel(candidate)}</dt>
+            <dd>{candidate.overallScore.toFixed(1)}</dd>
           </div>
         </dl>
+        {valueDisplay.observed ? (
+          <p className="source-observation-disclaimer">
+            {valueDisplay.subline}. Confirm the source record and effective tax year before use.
+          </p>
+        ) : null}
       </section>
 
       {candidate.materialChange ? (
@@ -384,7 +592,7 @@ function CandidateDetail({
     <Panel as="aside" className="detail-panel" id="evidence-panel">
       <header className="detail-panel__header">
         <div className="detail-panel__title">
-          <ScoreRing score={candidate.overallScore} />
+          <ScoreRing label={candidateScoreLabel(candidate)} score={candidate.overallScore} />
           <div>
             <span className="detail-panel__rank">Rank {String(candidate.rank).padStart(2, "0")}</span>
             <h2>{candidate.name}</h2>
@@ -393,7 +601,7 @@ function CandidateDetail({
             </p>
           </div>
         </div>
-        <Badge tone="outline">Evidence view</Badge>
+        <Badge tone="outline">{candidate.screeningOnly ? "Research only" : "Evidence view"}</Badge>
       </header>
 
       <div aria-label="Candidate detail" className="detail-tabs" role="tablist">
@@ -460,6 +668,10 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
           100,
       )
     : 0;
+  const hasScreeningCandidates = snapshot.candidates.some(
+    (candidate) => candidate.screeningOnly,
+  );
+  const hasCandidates = snapshot.candidates.length > 0;
 
   function reviewChanges() {
     setFilter("new");
@@ -485,7 +697,16 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
         <div className="topbar-meta">
           <span className="topbar-asof">
             <ClockIcon />
-            As of {formatAsOf(snapshot.asOf, snapshot.timeZone)}
+            {snapshot.asOf ? (
+              <>
+                Snapshot{" "}
+                <time dateTime={snapshot.asOf}>
+                  {formatAsOf(snapshot.asOf, snapshot.timeZone)}
+                </time>
+              </>
+            ) : (
+              "Snapshot time unavailable"
+            )}
           </span>
           <span aria-label="Current user: Operator" className="avatar">
             OP
@@ -497,26 +718,63 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
         <section className="page-heading" id="overview">
           <div>
             <div className="eyebrow-row">
-              <span>Investment queue</span>
-              {snapshot.isSynthetic ? <Badge tone="outline">Synthetic data</Badge> : null}
+              <span>
+                {!hasCandidates
+                  ? "Dataset status"
+                  : hasScreeningCandidates
+                    ? "Parcel screening"
+                    : snapshot.isSynthetic
+                      ? "Synthetic candidate preview"
+                      : "Investment queue"}
+              </span>
+              <Badge
+                tone={
+                  snapshot.provenance.mode === "live" && !snapshot.provenance.isFallback
+                    ? "accent"
+                    : "outline"
+                }
+              >
+                {datasetModeLabel(snapshot)}
+              </Badge>
             </div>
-            <h1>Best opportunities, right now</h1>
+            <h1>
+              {!hasCandidates
+                ? "Candidate data is unavailable"
+                : hasScreeningCandidates
+                  ? "Source-backed parcels for research"
+                  : snapshot.isSynthetic
+                    ? "Synthetic candidates for product validation"
+                    : "Best opportunities, right now"}
+            </h1>
             <p>
-              A ranked, explainable review of {snapshot.region} candidates. Unknowns stay
-              visible; every decision traces back to evidence.
+              {!hasCandidates
+                ? "Review the dataset status and source provenance below. No candidate or outreach action is available from this snapshot."
+                : hasScreeningCandidates
+                  ? `A research-only screen of ${snapshot.region} parcel observations. Source values and unknowns remain explicit.`
+                  : snapshot.isSynthetic
+                    ? `A deterministic preview of ${snapshot.region} candidate fixtures. Every record is fictional and non-actionable.`
+                    : `A ranked, explainable review of ${snapshot.region} candidates. Unknowns stay visible; every decision traces back to evidence.`}
             </p>
           </div>
-          <Button onClick={reviewChanges} variant="primary">
+          <Button disabled={!hasCandidates} onClick={reviewChanges} variant="primary">
             Review new changes
             <ArrowUpIcon />
           </Button>
         </section>
 
+        <DataProvenancePanel snapshot={snapshot} />
+
         <section aria-label="Queue summary" className="metric-grid">
           <Panel className="metric-card">
-            <span>Active queue</span>
+            <span>{snapshot.isSynthetic ? "Fixture queue" : "Active queue"}</span>
             <strong>{snapshot.candidates.length}</strong>
-            <p>Eligible after minimum data gates</p>
+            <p>
+              {snapshot.isSynthetic
+                ? "Fictional records for interface validation"
+                : hasScreeningCandidates
+                  ? "Source records available for research"
+                  : "Eligible after minimum data gates"}
+            </p>
           </Panel>
           <Panel className="metric-card">
             <span>Changed</span>
@@ -528,7 +786,7 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
             <strong>{reviewCount}</strong>
             <p>Unknown or conflicting evidence</p>
           </Panel>
-          <Panel className="metric-card" id="source-health">
+          <Panel className="metric-card">
             <span>Average confidence</span>
             <strong>{averageConfidence}%</strong>
             <p>Across this ranking snapshot</p>
@@ -541,7 +799,13 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
               <div>
                 <div className="section-heading-row">
                   <h2>{snapshot.label}</h2>
-                  <Badge tone="accent">Shadow mode</Badge>
+                  <Badge tone="accent">
+                    {hasScreeningCandidates
+                      ? "Research only"
+                      : snapshot.isSynthetic
+                        ? "Synthetic fixtures"
+                        : "Shadow mode"}
+                  </Badge>
                 </div>
                 <p>
                   {snapshot.modelVersion} · stable ranking snapshot
@@ -600,8 +864,11 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
 
         <footer className="workspace-footer">
           <p>
-            Synthetic product preview. Scores, parties, values, and parcels are fictional and
-            are not investment, legal, tax, engineering, or valuation advice.
+            {snapshot.isSynthetic
+              ? "Synthetic product preview. Scores, parties, values, and parcels are fictional. "
+              : "Source-backed parcel screening. Assessor observations and screening scores are not offers, acquisition basis, or independent valuations. "}
+            Data availability never activates owner outreach. Nothing shown is investment,
+            legal, tax, engineering, or valuation advice.
           </p>
           <a href="/api/health">
             Service health

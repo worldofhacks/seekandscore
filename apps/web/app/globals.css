@@ -584,6 +584,236 @@ dd {
   font-size: 13px;
 }
 
+.data-provenance {
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-medium);
+  background: var(--surface);
+}
+
+.data-provenance--current {
+  border-color: #a9c6bb;
+}
+
+.data-provenance--stale,
+.data-provenance--partial,
+.data-provenance--error,
+.data-provenance--fallback,
+.data-provenance--unknown {
+  border-left: 3px solid var(--ink);
+}
+
+.data-provenance__summary {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.data-provenance__icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-small);
+  color: var(--accent);
+}
+
+.data-provenance--stale .data-provenance__icon,
+.data-provenance--partial .data-provenance__icon,
+.data-provenance--error .data-provenance__icon,
+.data-provenance--fallback .data-provenance__icon,
+.data-provenance--unknown .data-provenance__icon {
+  color: var(--ink);
+}
+
+.data-provenance__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.data-provenance__summary h2 {
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+
+.data-provenance__summary p {
+  max-width: 920px;
+  margin-top: 3px;
+  color: var(--ink-subtle);
+  font-size: 10px;
+}
+
+.data-provenance__facts {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr 1fr;
+  border-bottom: 1px solid var(--line);
+}
+
+.data-provenance__facts > div {
+  min-width: 0;
+  padding: 12px 16px;
+  border-right: 1px solid var(--line);
+}
+
+.data-provenance__facts > div:last-child {
+  border-right: 0;
+}
+
+.data-provenance dt,
+.source-provenance dt {
+  color: var(--ink-muted);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.data-provenance dd,
+.source-provenance dd {
+  overflow: hidden;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-provenance summary {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  color: var(--ink-subtle);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.source-provenance summary::-webkit-details-marker {
+  display: none;
+}
+
+.source-provenance summary::before {
+  width: 7px;
+  height: 7px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+  transition: transform 150ms ease;
+}
+
+.source-provenance[open] summary::before {
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.source-provenance summary span {
+  min-width: 20px;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 8px;
+  text-align: center;
+}
+
+.source-provenance ul,
+.data-provenance__warnings {
+  list-style: none;
+}
+
+.source-provenance ul {
+  border-top: 1px solid var(--line);
+}
+
+.source-provenance li {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(180px, 1fr) minmax(220px, 1.1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.source-provenance li:last-child {
+  border-bottom: 0;
+}
+
+.source-provenance li > div:first-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.source-provenance li strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-provenance li > div:first-child span,
+.source-provenance__status > span,
+.source-provenance li > p {
+  color: var(--ink-muted);
+  font-size: 8px;
+}
+
+.source-provenance__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-provenance li dl {
+  display: grid;
+  grid-template-columns: 1fr 0.7fr;
+  gap: 12px;
+}
+
+.source-provenance li > p {
+  grid-column: 1 / -1;
+}
+
+.data-provenance__warnings {
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.data-provenance__warnings li {
+  position: relative;
+  padding-left: 12px;
+  color: var(--ink-subtle);
+  font-size: 9px;
+}
+
+.data-provenance__warnings li::before {
+  position: absolute;
+  left: 0;
+  content: "—";
+}
+
+.data-provenance__screening-note {
+  padding: 10px 16px;
+  border-top: 1px solid #bdd1c9;
+  background: var(--accent-soft);
+  color: var(--ink-subtle);
+  font-size: 9px;
+}
+
+.data-provenance__screening-note strong {
+  color: var(--accent-hover);
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1127,6 +1357,13 @@ dd {
   line-height: 1.6;
 }
 
+.source-observation-disclaimer {
+  margin-top: 8px !important;
+  color: var(--ink-muted) !important;
+  font-size: 8px !important;
+  line-height: 1.5 !important;
+}
+
 .decision-stats {
   display: grid;
   grid-template-columns: 1.35fr 1fr 0.8fr;
@@ -1657,6 +1894,26 @@ dd {
     grid-template-columns: 1fr;
   }
 
+  .data-provenance__facts {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .data-provenance__facts > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .data-provenance__facts > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .source-provenance li {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .source-provenance li dl {
+    grid-column: 1 / -1;
+  }
+
   .detail-panel {
     position: static;
   }
@@ -1748,6 +2005,38 @@ dd {
 
   .metric-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .data-provenance__summary {
+    grid-template-columns: 32px minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .data-provenance__icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .data-provenance__facts {
+    grid-template-columns: 1fr;
+  }
+
+  .data-provenance__facts > div,
+  .data-provenance__facts > div:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .data-provenance__facts > div:last-child {
+    border-bottom: 0;
+  }
+
+  .source-provenance li {
+    grid-template-columns: 1fr;
+  }
+
+  .source-provenance li dl {
+    grid-column: auto;
   }
 
   .metric-card {

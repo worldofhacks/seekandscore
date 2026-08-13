@@ -17,6 +17,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-interval", type=float, default=5.0)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--max-cycles", type=int)
+    parser.add_argument(
+        "--run-source",
+        help="run one source through the durable acquisition service, then exit",
+    )
     return parser
 
 
@@ -24,6 +28,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = get_settings()
     configure_logging(settings.log_level)
+    if args.run_source:
+        from seekandscore.ingestion.__main__ import main as ingestion_main
+
+        return ingestion_main(["run", "--source", args.run_source])
     try:
         queues = parse_queues(args.queues)
     except ValueError as error:

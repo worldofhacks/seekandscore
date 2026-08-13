@@ -32,11 +32,12 @@ def require_safe_runtime_defaults() -> list[str]:
     entrypoint = (ROOT / "scripts/runtime/python-entrypoint.sh").read_text(encoding="utf-8")
     expected = {
         "INGESTION_ENABLED": "false",
+        "LIVE_SOURCE_DISPLAY_ENABLED": "false",
         "OUTREACH_MODE": "disabled",
         "OUTREACH_SEND_ENABLED": "false",
     }
     for name, value in expected.items():
-        if f'${{{name}:={value}}}' not in entrypoint:
+        if f"${{{name}:={value}}}" not in entrypoint:
             failures.append(f"python entrypoint must default {name}={value}")
 
     compose = parse_yaml(ROOT / "compose.yaml")
@@ -56,12 +57,60 @@ def require_safe_railway_commands() -> list[str]:
         config = parse_toml(path)
         deploy = config.get("deploy", {}) if isinstance(config, dict) else {}
         command = deploy.get("startCommand") if isinstance(deploy, dict) else None
-        if isinstance(command, str) and "python -m seekandscore" in command:
-            if not command.startswith(f"{safe_entrypoint} "):
-                failures.append(
-                    f"{path.relative_to(ROOT)}: Python startCommand must invoke "
-                    f"{safe_entrypoint}"
-                )
+        if (
+            isinstance(command, str)
+            and "python -m seekandscore" in command
+            and not command.startswith(f"{safe_entrypoint} ")
+        ):
+            failures.append(
+                f"{path.relative_to(ROOT)}: Python startCommand must invoke {safe_entrypoint}"
+            )
+    return failures
+
+
+def require_safe_ingestion_profiles() -> list[str]:
+    """Keep committed live-source descriptions inert and bounded."""
+
+    failures: list[str] = []
+    for path in sorted((ROOT / "config/ingestion").glob("*.yaml")):
+        profile = parse_yaml(path)
+        label = path.relative_to(ROOT)
+        if not isinstance(profile, dict):
+            failures.append(f"{label}: ingestion profile must be a mapping")
+            continue
+        if profile.get("default_enabled") is not False:
+            failures.append(f"{label}: default_enabled must be false")
+        sources = profile.get("sources")
+        if not isinstance(sources, list) or not sources:
+            failures.append(f"{label}: sources must be a non-empty list")
+            continue
+        for source in sources:
+            if not isinstance(source, dict):
+                failures.append(f"{label}: every source must be a mapping")
+                continue
+            source_id = source.get("id", "<unknown>")
+            if source.get("enabled") is not False:
+                failures.append(f"{label}#{source_id}: enabled must be false")
+            bounds = source.get("bounded_fetch")
+            if not isinstance(bounds, dict):
+                continue
+            page_size = bounds.get("default_page_size")
+            max_page_size = bounds.get("maximum_page_size")
+            contract = source.get("upstream_contract", {})
+            provider_max = contract.get("provider_max_record_count", 0)
+            if not all(isinstance(value, int) for value in (page_size, max_page_size)):
+                failures.append(f"{label}#{source_id}: page bounds must be integers")
+            elif page_size > max_page_size:
+                failures.append(f"{label}#{source_id}: default page exceeds maximum")
+            if (
+                isinstance(provider_max, int)
+                and isinstance(max_page_size, int)
+                and provider_max
+                and max_page_size > provider_max
+            ):
+                failures.append(f"{label}#{source_id}: page maximum exceeds provider limit")
+            if bounds.get("max_concurrency") != 1:
+                failures.append(f"{label}#{source_id}: max_concurrency must be 1")
     return failures
 
 
@@ -77,13 +126,14 @@ def main() -> int:
             parsed = parse_toml(path) if path.suffix == ".toml" else parse_yaml(path)
             if parsed is None:
                 failures.append(f"{path.relative_to(ROOT)}: empty configuration")
-        except Exception as exc:  # noqa: BLE001 - report every malformed config together
+        except Exception as exc:
             failures.append(f"{path.relative_to(ROOT)}: {exc}")
 
     try:
         failures.extend(require_safe_runtime_defaults())
         failures.extend(require_safe_railway_commands())
-    except Exception as exc:  # noqa: BLE001
+        failures.extend(require_safe_ingestion_profiles())
+    except Exception as exc:
         failures.append(f"deployment safety validation failed: {exc}")
 
     if failures:

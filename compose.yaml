@@ -4,6 +4,7 @@ x-safe-runtime: &safe-runtime
   APP_ENV: development
   DATASET_MODE: synthetic
   INGESTION_ENABLED: "false"
+  LIVE_SOURCE_DISPLAY_ENABLED: "false"
   ALERT_DELIVERY_MODE: log
   OUTREACH_MODE: disabled
   OUTREACH_SEND_ENABLED: "false"
@@ -24,6 +25,18 @@ x-python-service: &python-service
     OBJECT_STORAGE_BUCKET: seekandscore-raw-dev
     OBJECT_STORAGE_ACCESS_KEY_ID: seekandscore
     OBJECT_STORAGE_SECRET_ACCESS_KEY: seekandscore-local-only
+    OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+    OBJECT_STORAGE_PREFIX: raw-artifacts
+    INGESTION_CONFIG_PATH: config/ingestion/us-tx-central-texas-v1.yaml
+    INGESTION_SOURCE_ID: travis_tcad_parcels
+    INGESTION_PAGE_SIZE: "250"
+    INGESTION_MAX_RECORDS: "250"
+    INGESTION_HTTP_TIMEOUT_SECONDS: "30"
+    INGESTION_MIN_REQUEST_INTERVAL_SECONDS: "1"
+    INGESTION_MAX_RETRIES: "3"
+    INGESTION_WHERE: PROP_ID IS NOT NULL AND tcad_acres >= 1
+    INGESTION_ORDER_BY: OBJECTID ASC
+    RAW_ARTIFACT_ROOT: /data/raw-artifacts
   depends_on:
     postgis:
       condition: service_healthy
@@ -131,6 +144,15 @@ services:
       dockerfile: infra/docker/worker.Dockerfile
     command: [python, -m, seekandscore.worker, --queues, acquire,parse,resolve,geo,market,score,deliver]
     stop_grace_period: 60s
+
+  ingestion-travis:
+    <<: *python-service
+    profiles: [ingestion]
+    build:
+      context: .
+      dockerfile: infra/docker/worker.Dockerfile
+    command: [python, -m, seekandscore.ingestion, run, --source, travis_tcad_parcels]
+    restart: "no"
 
   web:
     profiles: [app]

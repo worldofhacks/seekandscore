@@ -27,6 +27,7 @@ htmlcov/
 # Data and geospatial artifacts
 data/raw/
 data/processed/
+var/raw-artifacts/
 *.gpkg
 *.geojson
 *.shp

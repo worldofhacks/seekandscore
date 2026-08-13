@@ -1,0 +1,288 @@
+"""Durable Postgres repository and deterministic in-memory test repository."""
+
+from collections.abc import Iterable
+from typing import Protocol
+
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import Engine
+
+from seekandscore.acquisition.models import (
+    NormalizedParcelObservation,
+    QuarantinedRecord,
+    RawArtifact,
+    SourceRun,
+)
+
+
+class AcquisitionRepository(Protocol):
+    def latest_run(self, source_id: str) -> SourceRun | None: ...
+
+    def latest_artifact(self, source_id: str) -> RawArtifact | None: ...
+
+    def save_run(self, run: SourceRun) -> None: ...
+
+    def save_artifact(self, artifact: RawArtifact) -> None: ...
+
+    def save_observations(self, observations: Iterable[NormalizedParcelObservation]) -> int: ...
+
+    def save_quarantine(self, records: Iterable[QuarantinedRecord]) -> int: ...
+
+    def list_latest_observations(
+        self, *, limit: int, offset: int = 0
+    ) -> tuple[NormalizedParcelObservation, ...]: ...
+
+
+class MemoryAcquisitionRepository:
+    def __init__(self) -> None:
+        self.runs: dict[object, SourceRun] = {}
+        self.artifacts: dict[object, RawArtifact] = {}
+        self.observations: dict[object, NormalizedParcelObservation] = {}
+        self.quarantine: dict[object, QuarantinedRecord] = {}
+
+    def latest_run(self, source_id: str) -> SourceRun | None:
+        matches = [run for run in self.runs.values() if run.source_id == source_id]
+        return max(matches, key=lambda run: (run.started_at, str(run.id))) if matches else None
+
+    def latest_artifact(self, source_id: str) -> RawArtifact | None:
+        matches = [item for item in self.artifacts.values() if item.source_id == source_id]
+        return max(matches, key=lambda item: (item.retrieved_at, str(item.id))) if matches else None
+
+    def save_run(self, run: SourceRun) -> None:
+        self.runs[run.id] = run
+
+    def save_artifact(self, artifact: RawArtifact) -> None:
+        existing = next(
+            (
+                item
+                for item in self.artifacts.values()
+                if item.source_id == artifact.source_id and item.sha256 == artifact.sha256
+            ),
+            None,
+        )
+        if existing is not None and existing.model_dump() != artifact.model_dump():
+            # Content identity wins; its first retrieval metadata is immutable.
+            return
+        self.artifacts.setdefault(artifact.id, artifact)
+
+    def save_observations(self, observations: Iterable[NormalizedParcelObservation]) -> int:
+        inserted = 0
+        for observation in observations:
+            if observation.id not in self.observations:
+                self.observations[observation.id] = observation
+                inserted += 1
+        return inserted
+
+    def save_quarantine(self, records: Iterable[QuarantinedRecord]) -> int:
+        inserted = 0
+        for record in records:
+            if record.id not in self.quarantine:
+                self.quarantine[record.id] = record
+                inserted += 1
+        return inserted
+
+    def list_latest_observations(
+        self, *, limit: int, offset: int = 0
+    ) -> tuple[NormalizedParcelObservation, ...]:
+        latest_by_parcel: dict[str, NormalizedParcelObservation] = {}
+        for item in self.observations.values():
+            current = latest_by_parcel.get(item.local_parcel_id)
+            if current is None or item.observed_at > current.observed_at:
+                latest_by_parcel[item.local_parcel_id] = item
+        ordered = sorted(
+            latest_by_parcel.values(),
+            key=lambda item: (
+                -(item.tcad_acres or item.gis_acres or 0),
+                item.local_parcel_id,
+            ),
+        )
+        return tuple(ordered[offset : offset + limit])
+
+
+metadata = sa.MetaData()
+
+source_run_table = sa.Table(
+    "source_run",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("payload", sa.JSON(), nullable=False),
+    sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+    schema="registry",
+)
+
+raw_artifact_table = sa.Table(
+    "artifact",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("sha256", sa.String(64), nullable=False),
+    sa.Column("payload", sa.JSON(), nullable=False),
+    sa.Column("retrieved_at", sa.DateTime(timezone=True), nullable=False),
+    schema="raw",
+)
+
+observation_table = sa.Table(
+    "parcel_observation",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("source_record_id", sa.Text(), nullable=False),
+    sa.Column("artifact_sha256", sa.String(64), nullable=False),
+    sa.Column("parser_version", sa.Text(), nullable=False),
+    sa.Column("payload", sa.JSON(), nullable=False),
+    schema="observation",
+)
+
+quarantine_table = sa.Table(
+    "quarantined_record",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("artifact_id", sa.Uuid(), nullable=False),
+    sa.Column("payload", sa.JSON(), nullable=False),
+    schema="observation",
+)
+
+
+class PostgresAcquisitionRepository:
+    """Postgres JSON-envelope repository preserving versioned contracts exactly."""
+
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def latest_run(self, source_id: str) -> SourceRun | None:
+        statement = (
+            sa.select(source_run_table.c.payload)
+            .where(source_run_table.c.source_id == source_id)
+            .order_by(source_run_table.c.started_at.desc(), source_run_table.c.id.desc())
+            .limit(1)
+        )
+        with self.engine.connect() as connection:
+            payload = connection.scalar(statement)
+        return SourceRun.model_validate(payload) if payload else None
+
+    def latest_artifact(self, source_id: str) -> RawArtifact | None:
+        statement = (
+            sa.select(raw_artifact_table.c.payload)
+            .where(raw_artifact_table.c.source_id == source_id)
+            .order_by(raw_artifact_table.c.retrieved_at.desc(), raw_artifact_table.c.id.desc())
+            .limit(1)
+        )
+        with self.engine.connect() as connection:
+            payload = connection.scalar(statement)
+        return RawArtifact.model_validate(payload) if payload else None
+
+    def save_run(self, run: SourceRun) -> None:
+        statement = pg_insert(source_run_table).values(
+            id=run.id,
+            source_id=run.source_id,
+            payload=run.model_dump(mode="json"),
+            started_at=run.started_at,
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=[source_run_table.c.id],
+            set_={"payload": statement.excluded.payload},
+        )
+        with self.engine.begin() as connection:
+            connection.execute(statement)
+
+    def save_artifact(self, artifact: RawArtifact) -> None:
+        statement = pg_insert(raw_artifact_table).values(
+            id=artifact.id,
+            source_id=artifact.source_id,
+            sha256=artifact.sha256,
+            payload=artifact.model_dump(mode="json"),
+            retrieved_at=artifact.retrieved_at,
+        )
+        statement = statement.on_conflict_do_nothing(
+            index_elements=[raw_artifact_table.c.source_id, raw_artifact_table.c.sha256]
+        )
+        with self.engine.begin() as connection:
+            connection.execute(statement)
+
+    def save_observations(self, observations: Iterable[NormalizedParcelObservation]) -> int:
+        values = [
+            {
+                "id": item.id,
+                "source_id": item.source_id,
+                "source_record_id": item.source_record_id,
+                "artifact_sha256": item.artifact_sha256,
+                "parser_version": item.parser_version,
+                "payload": item.model_dump(mode="json"),
+            }
+            for item in observations
+        ]
+        if not values:
+            return 0
+        statement = (
+            pg_insert(observation_table)
+            .values(values)
+            .on_conflict_do_nothing()
+            .returning(observation_table.c.id)
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+            inserted_ids = tuple(result.scalars())
+        return len(inserted_ids)
+
+    def save_quarantine(self, records: Iterable[QuarantinedRecord]) -> int:
+        values = [
+            {
+                "id": item.id,
+                "source_id": item.source_id,
+                "artifact_id": item.artifact_id,
+                "payload": item.model_dump(mode="json"),
+            }
+            for item in records
+        ]
+        if not values:
+            return 0
+        statement = (
+            pg_insert(quarantine_table)
+            .values(values)
+            .on_conflict_do_nothing()
+            .returning(quarantine_table.c.id)
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+            inserted_ids = tuple(result.scalars())
+        return len(inserted_ids)
+
+    def list_latest_observations(
+        self, *, limit: int, offset: int = 0
+    ) -> tuple[NormalizedParcelObservation, ...]:
+        ranked = (
+            sa.select(
+                observation_table.c.payload,
+                sa.func.row_number()
+                .over(
+                    partition_by=observation_table.c.source_record_id,
+                    order_by=sa.cast(
+                        observation_table.c.payload["observed_at"].astext,
+                        sa.DateTime(timezone=True),
+                    ).desc(),
+                )
+                .label("version_rank"),
+            )
+            .where(observation_table.c.source_id == "travis_tcad_parcels")
+            .cte("ranked_observations")
+        )
+        statement = (
+            sa.select(ranked.c.payload)
+            .where(ranked.c.version_rank == 1)
+            .order_by(
+                sa.cast(
+                    ranked.c.payload["tcad_acres"].astext,
+                    sa.Float(),
+                )
+                .desc()
+                .nullslast(),
+                ranked.c.payload["local_parcel_id"].astext,
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        with self.engine.connect() as connection:
+            rows = connection.scalars(statement).all()
+        return tuple(NormalizedParcelObservation.model_validate(row) for row in rows)
