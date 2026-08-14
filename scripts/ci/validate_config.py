@@ -51,10 +51,24 @@ def require_safe_runtime_defaults() -> list[str]:
     for marker in (
         "audit-api-runtime",
         "audit-ingestion-runtime",
+        "audit-oz-importer-runtime",
+        "audit-oz-membership-runtime",
         "owner credential must not be present at runtime",
     ):
         if marker not in role_entrypoint:
             failures.append(f"database role entrypoint is missing safety marker: {marker}")
+
+    migration_entrypoint = (ROOT / "scripts/runtime/db-migrate-entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    for variable in (
+        "OZ_IMPORTER_RUNTIME_DATABASE_URL",
+        "OZ_IMPORTER_DATABASE_PASSWORD",
+        "OZ_MEMBERSHIP_RUNTIME_DATABASE_URL",
+        "OZ_MEMBERSHIP_DATABASE_PASSWORD",
+    ):
+        if variable not in migration_entrypoint:
+            failures.append(f"database migration entrypoint must require {variable}")
 
     web_entrypoint = (ROOT / "scripts/runtime/web-entrypoint.sh").read_text(encoding="utf-8")
     if "${DATASET_MODE:=live}" not in web_entrypoint:
@@ -161,6 +175,10 @@ def require_database_role_isolation() -> list[str]:
         "api.example.toml": "database-role-entrypoint.sh api ",
         "ingestion-travis.example.toml": "database-role-entrypoint.sh ingestion ",
         "ingestion-travis.cron.example.toml": "database-role-entrypoint.sh ingestion ",
+        "oz-import-2018.example.toml": "database-role-entrypoint.sh oz-importer ",
+        "oz-membership-build.example.toml": "database-role-entrypoint.sh oz-membership ",
+        "oz-membership-build.cron.example.toml": "database-role-entrypoint.sh oz-membership ",
+        "oz-membership-verify.example.toml": "database-role-entrypoint.sh oz-membership ",
         "worker-discovery.example.toml": "database-role-entrypoint.sh ingestion ",
         "worker-enrichment.example.toml": "database-role-entrypoint.sh unprovisioned ",
         "worker-engagement.example.toml": "database-role-entrypoint.sh unprovisioned ",
@@ -173,6 +191,46 @@ def require_database_role_isolation() -> list[str]:
             failures.append(f"infra/railway/{filename}: missing database role contract {marker}")
         if isinstance(deploy, dict) and "preDeployCommand" in deploy:
             failures.append(f"infra/railway/{filename}: runtime service must not own migrations")
+
+    for filename in (
+        "oz-import-2018.example.toml",
+        "oz-membership-build.example.toml",
+        "oz-membership-verify.example.toml",
+    ):
+        deploy = parse_toml(railway / filename).get("deploy", {})
+        if not isinstance(deploy, dict):
+            failures.append(f"infra/railway/{filename}: deploy config is required")
+            continue
+        if "cronSchedule" in deploy:
+            failures.append(f"infra/railway/{filename}: frozen QOZ stages must remain unscheduled")
+        if deploy.get("restartPolicyType") != "NEVER":
+            failures.append(f"infra/railway/{filename}: one-shot QOZ stage must never restart")
+
+    membership_cron = parse_toml(
+        railway / "oz-membership-build.cron.example.toml"
+    ).get("deploy", {})
+    if not isinstance(membership_cron, dict):
+        failures.append("infra/railway/oz-membership-build.cron.example.toml: deploy required")
+    else:
+        if membership_cron.get("cronSchedule") != "47 9 2 * *":
+            failures.append("monthly QOZ membership refresh must follow TCAD at 47 9 2 * * UTC")
+        if membership_cron.get("restartPolicyType") != "NEVER":
+            failures.append("monthly QOZ membership refresh must never restart")
+        if "preDeployCommand" in membership_cron:
+            failures.append("monthly QOZ membership refresh must not own migrations")
+
+    for filename in (
+        "oz-membership-build.example.toml",
+        "oz-membership-build.cron.example.toml",
+        "oz-membership-verify.example.toml",
+    ):
+        content = (railway / filename).read_text(encoding="utf-8")
+        for forbidden in ("oz-importer", "OZ_2018_IMPORT", "OBJECT_STORAGE_"):
+            if forbidden in content:
+                failures.append(
+                    f"infra/railway/{filename}: membership service contains forbidden "
+                    f"import capability marker {forbidden}"
+                )
 
     migration_path = railway / "db-migrate.example.toml"
     migration_deploy = parse_toml(migration_path).get("deploy", {})

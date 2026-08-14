@@ -1,9 +1,11 @@
 """Official Travis County TNR / TCAD ArcGIS parcel adapter."""
 
 import json
+import math
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from itertools import pairwise
 from typing import Any
 from uuid import UUID, uuid5
 
@@ -73,6 +75,13 @@ class ArcGisFeature(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     attributes: dict[str, Any]
+    geometry: dict[str, Any] | None = None
+
+
+class ArcGisSpatialReference(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    wkid: int
 
 
 class ArcGisPage(BaseModel):
@@ -80,6 +89,7 @@ class ArcGisPage(BaseModel):
 
     fields: tuple[ArcGisField, ...]
     features: tuple[ArcGisFeature, ...]
+    spatialReference: ArcGisSpatialReference
     exceededTransferLimit: bool = False
 
 
@@ -149,29 +159,24 @@ class TravisTcadArcGisAdapter:
             yield self.query.params(offset)
             offset += min(self.query.page_size, self.query.max_records - offset)
 
+    def validate_page_before_persistence(self, *, content: bytes) -> None:
+        """Reject unreviewed provider fields before response bytes reach object storage."""
+
+        self._validated_page(content)
+
     def parse_page(
         self,
         *,
         content: bytes,
         artifact: RawArtifact,
     ) -> tuple[tuple[NormalizedParcelObservation, ...], tuple[QuarantinedRecord, ...], bool]:
-        try:
-            payload = json.loads(content)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise SourceSchemaError("artifact is not valid UTF-8 JSON") from error
-        if isinstance(payload, dict) and "error" in payload:
-            raise ArcGisErrorResponse("ArcGIS returned an error envelope")
-        try:
-            page = ArcGisPage.model_validate(payload)
-        except ValidationError as error:
-            raise SourceSchemaError("artifact does not match ArcGIS feature-page schema") from error
-        self._validate_fields(page.fields)
+        page = self._validated_page(content)
 
         observations: list[NormalizedParcelObservation] = []
         quarantined: list[QuarantinedRecord] = []
         for feature in page.features:
             try:
-                observations.append(self._normalize(feature.attributes, artifact))
+                observations.append(self._normalize(feature, artifact))
             except (TypeError, ValueError) as error:
                 source_record_id = _string_or_none(feature.attributes.get("OBJECTID"))
                 quarantine_id = uuid5(
@@ -191,8 +196,37 @@ class TravisTcadArcGisAdapter:
                 )
         return tuple(observations), tuple(quarantined), page.exceededTransferLimit
 
+    def _validated_page(self, content: bytes) -> ArcGisPage:
+        try:
+            payload = json.loads(content)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise SourceSchemaError("artifact is not valid UTF-8 JSON") from error
+        if isinstance(payload, dict) and "error" in payload:
+            raise ArcGisErrorResponse("ArcGIS returned an error envelope")
+        try:
+            page = ArcGisPage.model_validate(payload)
+        except ValidationError as error:
+            raise SourceSchemaError("artifact does not match ArcGIS feature-page schema") from error
+        if page.spatialReference.wkid != 4326:
+            raise SourceSchemaError(
+                "ArcGIS feature-page spatial reference is not the requested WKID 4326"
+            )
+        self._validate_fields(page.fields)
+        approved_attributes = frozenset(OUT_FIELDS)
+        for feature in page.features:
+            if not set(feature.attributes).issubset(approved_attributes):
+                raise SourceSchemaError(
+                    "ArcGIS response contains attributes outside the reviewed allowlist"
+                )
+        return page
+
     def _validate_fields(self, fields: Iterable[ArcGisField]) -> None:
-        actual = {field.name: field.type for field in fields}
+        field_list = tuple(fields)
+        actual = {field.name: field.type for field in field_list}
+        if len(field_list) != len(OUT_FIELDS) or set(actual) != set(OUT_FIELDS):
+            raise SourceSchemaError(
+                "ArcGIS response field metadata differs from the reviewed allowlist"
+            )
         mismatches = {
             name: (expected, actual.get(name))
             for name, expected in REQUIRED_FIELD_TYPES.items()
@@ -203,9 +237,10 @@ class TravisTcadArcGisAdapter:
 
     def _normalize(
         self,
-        attributes: dict[str, Any],
+        feature: ArcGisFeature,
         artifact: RawArtifact,
     ) -> NormalizedParcelObservation:
+        attributes = feature.attributes
         object_id = _required_id(attributes.get("OBJECTID"), "OBJECTID")
         property_id = _required_id(attributes.get("PROP_ID"), "PROP_ID")
         source_record_id = str(object_id)
@@ -247,8 +282,124 @@ class TravisTcadArcGisAdapter:
                 attributes.get("land_non_homesite_val"),
             ),
             first_improvement_year=_year_or_none(attributes.get("F1year_imprv")),
+            geometry_srid=4326,
+            geometry_geojson=_polygon_geojson(feature.geometry),
             observed_at=artifact.retrieved_at,
         )
+
+
+Point = tuple[float, float]
+Ring = tuple[Point, ...]
+
+
+def _polygon_geojson(raw_geometry: dict[str, Any] | None) -> str:
+    """Normalize Esri rings into deterministic GeoJSON polygon topology.
+
+    Ring nesting, rather than source ordering, assigns holes to their containing outer ring. This
+    preserves multipart parcels and remains deterministic if an upstream page interleaves rings.
+    """
+
+    if raw_geometry is None or set(raw_geometry).isdisjoint({"rings"}):
+        raise ValueError("parcel geometry is missing")
+    raw_rings = raw_geometry.get("rings")
+    if not isinstance(raw_rings, list) or not raw_rings:
+        raise ValueError("parcel geometry rings are missing")
+    rings = tuple(_normalized_ring(value) for value in raw_rings)
+    areas = tuple(_signed_area(ring) for ring in rings)
+    parents: list[int | None] = []
+    for index, ring in enumerate(rings):
+        sample = ring[0]
+        containers = [
+            candidate
+            for candidate, other in enumerate(rings)
+            if candidate != index
+            and abs(areas[candidate]) > abs(areas[index])
+            and _point_in_ring(sample, other)
+        ]
+        parents.append(min(containers, key=lambda candidate: abs(areas[candidate]), default=None))
+
+    depths: list[int] = []
+    for index in range(len(rings)):
+        depth = 0
+        parent = parents[index]
+        seen = {index}
+        while parent is not None:
+            if parent in seen:
+                raise ValueError("parcel geometry contains cyclic ring topology")
+            seen.add(parent)
+            depth += 1
+            parent = parents[parent]
+        depths.append(depth)
+
+    polygons: list[list[list[list[float]]]] = []
+    for index, ring in enumerate(rings):
+        if depths[index] % 2:
+            continue
+        outer = _oriented_coordinates(ring, counter_clockwise=True)
+        holes = [
+            _oriented_coordinates(candidate, counter_clockwise=False)
+            for candidate_index, candidate in enumerate(rings)
+            if parents[candidate_index] == index and depths[candidate_index] % 2 == 1
+        ]
+        polygons.append([outer, *holes])
+    if not polygons:
+        raise ValueError("parcel geometry contains no polygon shells")
+    return json.dumps(
+        {"coordinates": polygons, "type": "MultiPolygon"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _normalized_ring(value: Any) -> Ring:
+    if not isinstance(value, list) or len(value) < 3:
+        raise ValueError("parcel geometry ring has fewer than three vertices")
+    points: list[Point] = []
+    for raw_point in value:
+        if not isinstance(raw_point, list) or len(raw_point) < 2:
+            raise ValueError("parcel geometry vertex is malformed")
+        x, y = raw_point[:2]
+        if isinstance(x, bool) or isinstance(y, bool):
+            raise ValueError("parcel geometry coordinate is invalid")
+        try:
+            point = (float(x), float(y))
+        except (TypeError, ValueError) as error:
+            raise ValueError("parcel geometry coordinate is invalid") from error
+        if (
+            not all(math.isfinite(coordinate) for coordinate in point)
+            or not -180 <= point[0] <= 180
+            or not -90 <= point[1] <= 90
+        ):
+            raise ValueError("parcel geometry coordinate is outside WGS84 bounds")
+        points.append(point)
+    if points[0] != points[-1]:
+        points.append(points[0])
+    ring = tuple(points)
+    if len(set(ring[:-1])) < 3 or math.isclose(_signed_area(ring), 0.0, abs_tol=1e-15):
+        raise ValueError("parcel geometry ring has zero area")
+    return ring
+
+
+def _signed_area(ring: Ring) -> float:
+    return sum((left[0] * right[1]) - (right[0] * left[1]) for left, right in pairwise(ring)) / 2
+
+
+def _point_in_ring(point: Point, ring: Ring) -> bool:
+    inside = False
+    x, y = point
+    for left, right in pairwise(ring):
+        if (left[1] > y) == (right[1] > y):
+            continue
+        crossing_x = (right[0] - left[0]) * (y - left[1]) / (right[1] - left[1]) + left[0]
+        if x < crossing_x:
+            inside = not inside
+    return inside
+
+
+def _oriented_coordinates(ring: Ring, *, counter_clockwise: bool) -> list[list[float]]:
+    is_counter_clockwise = _signed_area(ring) > 0
+    oriented = ring if is_counter_clockwise == counter_clockwise else tuple(reversed(ring))
+    return [[x, y] for x, y in oriented]
 
 
 def _required_id(value: Any, field: str) -> int:

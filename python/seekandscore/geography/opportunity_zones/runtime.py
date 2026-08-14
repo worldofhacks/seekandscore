@@ -3,8 +3,13 @@
 import httpx
 import sqlalchemy as sa
 
+from seekandscore.acquisition.repository import PostgresAcquisitionRepository
 from seekandscore.acquisition.store import S3ArtifactStore
 from seekandscore.geography.opportunity_zones.adapter import Cdfi2018ArchiveAdapter
+from seekandscore.geography.opportunity_zones.membership import (
+    OpportunityZoneMembershipService,
+    PostgresOpportunityZoneMembershipRepository,
+)
 from seekandscore.geography.opportunity_zones.repository import (
     PostgresOpportunityZoneRepository,
 )
@@ -15,7 +20,11 @@ from seekandscore.geography.opportunity_zones.settings import OpportunityZoneImp
 def build_import_service(settings: OpportunityZoneImportSettings) -> OpportunityZoneImportService:
     if not settings.database_url:
         raise ValueError("2018 QOZ import requires DATABASE_URL")
-    engine = sa.create_engine(settings.database_url, pool_pre_ping=True)
+    engine = sa.create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        hide_parameters=True,
+    )
     repository = PostgresOpportunityZoneRepository(engine)
     artifact_store = S3ArtifactStore(
         endpoint_url=settings.object_storage_endpoint or "",
@@ -42,5 +51,22 @@ def build_import_service(settings: OpportunityZoneImportSettings) -> Opportunity
         http_client=client,
         object_prefix=settings.object_storage_prefix,
         max_retries=settings.oz_2018_max_retries,
+        dispose=engine.dispose,
+    )
+
+
+def build_membership_service(
+    settings: OpportunityZoneImportSettings,
+) -> OpportunityZoneMembershipService:
+    if not settings.database_url:
+        raise ValueError("2018 QOZ membership requires DATABASE_URL")
+    engine = sa.create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        hide_parameters=True,
+    )
+    return OpportunityZoneMembershipService(
+        acquisition=PostgresAcquisitionRepository(engine),
+        memberships=PostgresOpportunityZoneMembershipRepository(engine),
         dispose=engine.dispose,
     )

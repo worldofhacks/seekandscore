@@ -79,7 +79,7 @@ rights:
   review_status: official_reference_source
   retention_allowed: true
   internal_use_allowed: true
-  display_allowed: false
+  display_allowed: true
   export_allowed: false
   redistribution_allowed: false
   attribution_required: true
@@ -87,4 +87,5 @@ rights:
   limitations:
     - Geography supports screening and reference; it does not establish tax eligibility.
     - Census boundaries are statistical and are not legal land descriptions.
-    - Public display requires a separate product/display approval and boundary-quality treatment.
+    - Display is limited to authenticated derived membership evidence behind the exact private-display approval gate.
+    - Geometry coordinates, export, and redistribution remain prohibited.

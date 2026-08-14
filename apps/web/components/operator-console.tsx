@@ -39,7 +39,11 @@ import {
   rankMovement,
 } from "@/lib/queue";
 import { formatAsOf, formatObserved } from "@/lib/dates";
-import { candidateScoreLabel, candidateValueDisplay } from "@/lib/presentation";
+import {
+  candidateScoreLabel,
+  candidateValueDisplay,
+  opportunityZoneDisplay,
+} from "@/lib/presentation";
 import {
   ResearchRequestError,
   createResearchCase,
@@ -255,8 +259,9 @@ function DataProvenancePanel({ snapshot }: { snapshot: TopQueueSnapshot }) {
         <p className="data-provenance__screening-note">
           <strong>Research-only screen.</strong> Assessed or appraised values are source
           observations—not offers, acquisition basis, or independent valuations. Screening
-          scores do not verify buildability, Opportunity Zone status, ownership, or contact
-          authority.
+          scores do not establish buildability, ownership, contact authority, or tax
+          qualification. Any Opportunity Zone geography shown below is a separate versioned
+          spatial result.
         </p>
       ) : null}
     </section>
@@ -295,6 +300,22 @@ function RankMovement({ candidate }: { candidate: CandidateSummary }) {
       {improved ? <ArrowUpIcon /> : <ArrowDownIcon />}
       {Math.abs(movement)}
     </span>
+  );
+}
+
+function OpportunityZoneCell({ candidate }: { candidate: CandidateSummary }) {
+  const display = opportunityZoneDisplay(candidate.opportunityZone);
+  return (
+    <div
+      aria-label={`2018 Opportunity Zone geography: ${display.label}`}
+      className={`oz-cell oz-cell--${candidate.opportunityZone.classification}`}
+    >
+      <span aria-hidden="true" className="oz-cell__mark" />
+      <span>
+        <strong>{display.shortLabel}</strong>
+        <small>{display.subline}</small>
+      </span>
+    </div>
   );
 }
 
@@ -339,6 +360,7 @@ function QueueTable({
             <th scope="col">Candidate</th>
             <th scope="col">Strategy</th>
             <th scope="col">Value evidence</th>
+            <th scope="col">2018 OZ geography</th>
             <th scope="col">Score</th>
             <th scope="col">Move</th>
             <th scope="col">
@@ -378,6 +400,9 @@ function QueueTable({
                   <span className="cell-subline">{valueDisplay.subline}</span>
                 </td>
                 <td>
+                  <OpportunityZoneCell candidate={candidate} />
+                </td>
+                <td>
                   <div className="score-cell">
                     <strong>{candidate.overallScore.toFixed(1)}</strong>
                     <span>
@@ -402,6 +427,170 @@ function QueueTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function artifactLabel(sha256: string): string {
+  return `${sha256.slice(0, 12)}…`;
+}
+
+function OpportunityZonePanel({
+  candidate,
+  timeZone,
+}: {
+  candidate: CandidateSummary;
+  timeZone: string;
+}) {
+  const evidence = candidate.opportunityZone;
+  const display = opportunityZoneDisplay(evidence);
+  const designation = evidence.designation;
+  const parcel = evidence.parcelGeometry;
+  const match =
+    evidence.classification === "inside"
+      ? `Tract ${designation?.tractGeoid ?? "not supplied"}`
+      : evidence.classification === "outside"
+        ? "No designated-tract intersection"
+        : evidence.classification === "boundary_review"
+          ? evidence.reasonCode === "designation_geometry_repaired"
+            ? "Repaired designation geometry · human review"
+            : evidence.reasonCode === "parcel_geometry_repaired"
+              ? "Repaired parcel geometry · human review"
+              : `${designation?.intersectingTractGeoids.length ?? 0} boundary intersection${designation?.intersectingTractGeoids.length === 1 ? "" : "s"}`
+          : "No classification represented";
+
+  return (
+    <section
+      aria-labelledby="opportunity-zone-heading"
+      className={`opportunity-zone-evidence opportunity-zone-evidence--${evidence.classification}`}
+    >
+      <div className="opportunity-zone-evidence__heading">
+        <div>
+          <span>Federal geographic reference</span>
+          <h3 id="opportunity-zone-heading">2018 Opportunity Zone evidence</h3>
+        </div>
+        <Badge tone={display.tone}>{display.shortLabel}</Badge>
+      </div>
+
+      <div className="opportunity-zone-evidence__result">
+        <span aria-hidden="true" className="opportunity-zone-evidence__mark" />
+        <div>
+          <strong>{display.label}</strong>
+          <p>{display.detail}</p>
+        </div>
+      </div>
+
+      <dl className="opportunity-zone-evidence__facts">
+        <div>
+          <dt>Designation round</dt>
+          <dd>{designation ? `2018 · ${designation.roundId}` : "2018 · unavailable"}</dd>
+        </div>
+        <div>
+          <dt>Geometry vintage</dt>
+          <dd>
+            {designation
+              ? `${designation.censusVintage} Census tracts`
+              : "2010 Census layer unavailable"}
+          </dd>
+        </div>
+        <div>
+          <dt>Geographic match</dt>
+          <dd>{match}</dd>
+        </div>
+        <div>
+          <dt>Classified</dt>
+          <dd>
+            {evidence.classifiedAt
+              ? formatObserved(evidence.classifiedAt, timeZone)
+              : "No completed snapshot"}
+          </dd>
+        </div>
+      </dl>
+
+      <div className="opportunity-zone-lineage">
+        <div className="section-heading-row">
+          <h4>Source evidence</h4>
+          <code>{evidence.reasonCode}</code>
+        </div>
+        {parcel || designation ? (
+          <dl>
+            {parcel ? (
+              <>
+                <div>
+                  <dt>Parcel geometry</dt>
+                  <dd>
+                    <code>{parcel.sourceId}</code>
+                    <span>{parcel.sourceRecordId}</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Parcel artifact</dt>
+                  <dd>
+                    <code title={parcel.artifactSha256}>
+                      sha256:{artifactLabel(parcel.artifactSha256)}
+                    </code>
+                    <span>{formatObserved(parcel.observedAt, timeZone)}</span>
+                  </dd>
+                </div>
+              </>
+            ) : null}
+            {designation ? (
+              <>
+                <div>
+                  <dt>Designation source</dt>
+                  <dd>
+                    <code>{designation.sourceId}</code>
+                    <a href={designation.authorityUri} rel="noreferrer" target="_blank">
+                      Official authority
+                      <ExternalIcon />
+                    </a>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Designation artifact</dt>
+                  <dd>
+                    <code title={designation.sourceArtifactSha256}>
+                      sha256:{artifactLabel(designation.sourceArtifactSha256)}
+                    </code>
+                    <span>
+                      Source interval {designation.effectiveFrom}–{designation.effectiveTo}
+                    </span>
+                    <span>
+                      {designation.geometryRepaired
+                        ? `Designation geometry repaired · ${designation.repairMethod}`
+                        : "Designation geometry used without repair"}
+                    </span>
+                  </dd>
+                </div>
+              </>
+            ) : null}
+            <div>
+              <dt>Spatial method</dt>
+              <dd>
+                <code>{evidence.method ?? "not_run"}</code>
+                <span>
+                  {parcel?.geometryRepaired
+                    ? `Parcel geometry repaired · ${parcel.repairMethod}`
+                    : parcel
+                      ? "Parcel geometry used without repair"
+                      : "Parcel geometry evidence unavailable"}
+                </span>
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="opportunity-zone-lineage__empty">
+            No displayable parcel-to-designation evidence accompanies this state. No result is
+            inferred.
+          </p>
+        )}
+      </div>
+
+      <p className="opportunity-zone-evidence__disclaimer">
+        <strong>Geographic screening only.</strong> This does not establish tax, fund,
+        business, entity, timing, or investment eligibility. Census tract boundaries are not
+        legal parcel boundaries.
+      </p>
+    </section>
   );
 }
 
@@ -452,6 +641,8 @@ function EvidencePanel({
         ) : null}
       </section>
 
+      <OpportunityZonePanel candidate={candidate} timeZone={timeZone} />
+
       {candidate.materialChange ? (
         <section className="material-change" aria-label="Material change">
           <ArrowUpIcon />
@@ -482,6 +673,9 @@ function EvidencePanel({
                 <p className="evidence-list__source">
                   {datum.source} · {formatObserved(datum.observedAt, timeZone)}
                 </p>
+                {datum.detail ? (
+                  <p className="evidence-list__detail">{datum.detail}</p>
+                ) : null}
               </div>
             </li>
           ))}
@@ -610,6 +804,7 @@ function CandidateDetail({
             <p>
               {candidate.locality} · {candidate.acreage.toFixed(1)} acres
             </p>
+            <code className="detail-panel__jurisdiction">{candidate.jurisdictionId}</code>
           </div>
         </div>
         <div className="detail-panel__header-actions">
@@ -964,8 +1159,9 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
             {hasLiveCohort
               ? "Source-backed parcel screening. Assessor observations and screening scores are not offers, acquisition basis, or independent valuations. "
               : "No property candidate records are currently displayed, and no unverified records are used. "}
-            Data availability never activates owner outreach. Nothing shown is investment, legal,
-            tax, engineering, or valuation advice.
+            Data availability never activates owner outreach. Opportunity Zone geography is
+            reference-only and never establishes tax qualification. Nothing shown is investment,
+            legal, tax, engineering, or valuation advice.
           </p>
           <a href="/api/health">
             Service health

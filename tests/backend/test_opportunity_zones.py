@@ -29,6 +29,7 @@ from seekandscore.geography.opportunity_zones.models import (
 )
 from seekandscore.geography.opportunity_zones.repository import (
     MemoryOpportunityZoneRepository,
+    OpportunityZonePersistenceError,
     PostgresOpportunityZoneRepository,
 )
 from seekandscore.geography.opportunity_zones.service import (
@@ -329,6 +330,15 @@ def test_postgis_import_is_transactional_valid_indexed_and_replay_safe() -> None
     repository = PostgresOpportunityZoneRepository(engine, batch_size=1)
     adapter = adapter_for(content)
     try:
+        with (
+            repository.import_lock(),
+            pytest.raises(OpportunityZonePersistenceError, match="already holds"),
+            PostgresOpportunityZoneRepository(engine).import_lock(),
+        ):
+            pytest.fail("contending static import must not enter its critical section")
+        with repository.import_lock():
+            pass
+
         repository.register_source(CDFI_QOZ_2018_SOURCE, registered_at=now)
         repository.save_artifact(artifact)
         with adapter.open_archive(content, artifact_id=artifact_id) as dataset:

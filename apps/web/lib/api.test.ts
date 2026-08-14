@@ -27,7 +27,35 @@ const livePage: ApiCandidatePage = {
       value_range: { low: 1_250_000, high: 1_250_000 },
       likely_basis: 0,
       thesis: "Deterministic assessor screening for research only.",
-      opportunity_zone_status: "review",
+      opportunity_zone_status: "effective",
+      opportunity_zone_evidence: {
+        classification: "inside",
+        reason_code: "matched_designated_tract",
+        method: "postgis_strict_interior_v1",
+        classified_at: "2026-08-14T09:00:00Z",
+        parcel_geometry: {
+          source_id: "travis_tcad_parcel_geometry",
+          source_record_id: "OBJECTID-42",
+          artifact_sha256: "b".repeat(64),
+          observed_at: "2026-08-13T10:30:00Z",
+          geometry_repaired: false,
+          repair_method: null,
+        },
+        designation: {
+          round_id: "us-federal-qoz-2018",
+          tract_geoid: "48453001754",
+          intersecting_tract_geoids: ["48453001754"],
+          census_vintage: 2010,
+          designation_status: "effective",
+          effective_from: "2018-01-01",
+          effective_to: "2028-12-31",
+          source_id: "federal_qoz_2018_designations",
+          source_artifact_sha256: "c".repeat(64),
+          authority_uri: "https://www.cdfifund.gov/opportunity-zones",
+          geometry_repaired: false,
+          repair_method: null,
+        },
+      },
       next_action: "Verify parcel geometry and Opportunity Zone overlay.",
       material_change: null,
       evidence: { source_count: 1, unresolved_conflict_count: 0, freshness: "current" },
@@ -63,7 +91,7 @@ const livePage: ApiCandidatePage = {
   published_at: null,
   stale_after: "2026-09-27T10:30:00Z",
   partial: false,
-  warnings: ["Opportunity Zone overlay is not yet verified."],
+  warnings: ["Opportunity Zone geography is reference-only."],
   sources: [
     {
       id: "travis_tcad_parcels",
@@ -88,7 +116,7 @@ describe("strict live candidate adapter", () => {
       mode: "live",
       status: "current",
       retrievedAt: "2026-08-13T10:30:00Z",
-      statusDetail: "Opportunity Zone overlay is not yet verified.",
+      statusDetail: "Opportunity Zone geography is reference-only.",
     });
     expect(snapshot.cohort).toEqual({
       cohortTotal: 953,
@@ -110,6 +138,16 @@ describe("strict live candidate adapter", () => {
         sourceId: "travis_tcad_parcels",
         fields: { appraisedValueCents: 125_000_000 },
       },
+      jurisdictionId: "us-tx-travis",
+      opportunityZone: {
+        classification: "inside",
+        reasonCode: "matched_designated_tract",
+        designation: {
+          roundId: "us-federal-qoz-2018",
+          tractGeoid: "48453001754",
+          censusVintage: 2010,
+        },
+      },
       outreachGate: {
         status: "blocked",
         blockers: expect.arrayContaining([
@@ -123,8 +161,33 @@ describe("strict live candidate adapter", () => {
           label: "Assessor value observation",
           detail: expect.stringContaining("not a platform valuation, offer, or acquisition basis"),
         }),
+        expect.objectContaining({
+          label: "2018 Opportunity Zone geography",
+          value: "Inside designated tract",
+          status: "verified",
+        }),
       ]),
     );
+    const serializedOpportunityZone = JSON.stringify(
+      snapshot.candidates[0].opportunityZone,
+    ).toLowerCase();
+    expect(serializedOpportunityZone).not.toMatch(
+      /coordinates|geojson|owner|contact|outreach|export/,
+    );
+  });
+
+  it("fails the live page closed when an item omits versioned OZ evidence", () => {
+    const item = { ...livePage.items[0] } as Partial<(typeof livePage.items)[number]>;
+    delete item.opportunity_zone_evidence;
+
+    const snapshot = mapApiCandidatePage({
+      ...livePage,
+      items: [item as (typeof livePage.items)[number]],
+    });
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.cohort.cohortTotal).toBe(0);
+    expect(snapshot.provenance.status).toBe("unavailable");
   });
 
   it("rejects a non-live dataset without mapping any candidate", () => {
@@ -288,7 +351,7 @@ describe("strict live candidate adapter", () => {
 
     expect(snapshot.candidates).toEqual([]);
     expect(snapshot.cohort.cohortTotal).toBe(0);
-    expect(snapshot.provenance.statusDetail).toContain("incompatible cohort contract");
+    expect(snapshot.provenance.statusDetail).toContain("incompatible cohort or evidence contract");
     expect(JSON.stringify(snapshot)).not.toContain("East Austin assessor parcel");
   });
 

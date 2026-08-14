@@ -15,6 +15,10 @@ Planned service mapping:
 | `scheduler` | `/infra/railway/scheduler.example.toml` | blocked until a dedicated role is approved |
 | `ingestion-travis` | `/infra/railway/ingestion-travis.example.toml` | manual bounded TCAD proof; fail-closed until source activation |
 | `ingestion-travis` (scheduled) | `/infra/railway/ingestion-travis.cron.example.toml` | same process with monthly UTC cron, attached only after proof |
+| `oz-import-2018` | `/infra/railway/oz-import-2018.example.toml` | manual frozen CDFI layer import and unchanged replay |
+| `oz-membership-refresh` (manual) | `/infra/railway/oz-membership-build.example.toml` | manual complete-cohort parcel spatial join |
+| `oz-membership-refresh` (verify) | `/infra/railway/oz-membership-verify.example.toml` | read-only frozen-layer and membership invariant check |
+| `oz-membership-refresh` | `/infra/railway/oz-membership-build.cron.example.toml` | monthly join refresh after a new complete TCAD cohort |
 
 Every Python image enters through `scripts/runtime/python-entrypoint.sh`. Unless an environment explicitly provides values, it forces these inert defaults:
 
@@ -130,3 +134,64 @@ Workers and scheduler never migrate. The engagement worker has no public domain,
 no discovery/alert credentials, and remains blocked. Every environment keeps
 `OUTREACH_MODE=disabled` and `OUTREACH_SEND_ENABLED=false`; provider mode and
 provider webhooks require a separate approved production activation record.
+
+## Federal 2018 Opportunity Zone service
+
+Use one private, unscheduled, restart-`NEVER` service for the static import
+config. It receives only the dedicated `seekandscore_oz_importer` database URL
+and the private artifact-bucket references. Use a different private service for
+the manual membership build, verification, and eventual cron config. Neither
+service receives the PostGIS owner URL, API/research credentials, outreach
+credentials, a domain, or the Travis ingestion login.
+
+`db-migrate` provisions and audits this third restricted login with:
+
+```text
+OZ_IMPORTER_DATABASE_LOGIN_ROLE=seekandscore_oz_importer
+OZ_IMPORTER_DATABASE_PASSWORD=<third distinct sealed URL-safe value>
+OZ_IMPORTER_RUNTIME_DATABASE_URL=<sealed restricted QOZ importer URL>
+```
+
+It separately provisions the recurring membership builder, which has no raw
+artifact or source-import capability:
+
+```text
+OZ_MEMBERSHIP_DATABASE_LOGIN_ROLE=seekandscore_oz_membership
+OZ_MEMBERSHIP_DATABASE_PASSWORD=<fourth distinct sealed URL-safe value>
+OZ_MEMBERSHIP_RUNTIME_DATABASE_URL=<sealed restricted membership URL>
+```
+
+The import stage receives references to a separate private
+`seekandscore-qoz-raw-staging` bucket. Railway bucket credentials are
+bucket-wide, so do not reuse the Travis raw-artifact bucket for this service.
+Keep both data-changing gates false and their IDs unset at rest:
+
+```text
+OZ_2018_IMPORT_ENABLED=false
+OZ_2018_IMPORT_ACTIVATION_ID=
+OZ_2018_MEMBERSHIP_BUILD_ENABLED=false
+OZ_2018_MEMBERSHIP_BUILD_ACTIVATION_ID=
+```
+
+The first gate loads the complete frozen federal layer; its exact reviewed ID is
+`SRC-CDFI-QOZ-2018-IMPORT-20260813-V1`. After a successful unchanged replay, the
+independent membership gate may use
+`GEO-TCAD-QOZ-2018-MEMBERSHIP-20260814-V1`. Neither gate enables display.
+Authenticated reference display is separately controlled by
+`OZ_2018_PRIVATE_DISPLAY_ENABLED` and approval ID
+`SRC-CDFI-QOZ-2018-PRIVATE-REFERENCE-DISPLAY-20260814-V1` on the private API/web
+path. The static 2018 archive import has no cron. After the first manual build
+and replay pass, a separate private membership-only service may run at
+`47 9 2 * *` UTC, 30 minutes after the approved Travis cohort refresh. Give that
+cron only the `seekandscore_oz_membership` URL and membership gate—no
+bucket/source/import credentials. It must refuse a running, failed, or partial
+latest TCAD attempt, derive its expected parcel count from the new complete
+cohort, and exit after an unchanged or newly materialized snapshot.
+After attaching the cron, read the service instance back and require both the
+exact `cronSchedule` and a non-null `nextCronRunAt`; the manifest alone did not
+persist this setting in the prior TCAD rollout. If absent, apply only the narrow
+service-instance cron-schedule update. Cron activation must not execute a
+membership build or create a build receipt immediately.
+
+Follow [the live QOZ rollout runbook](../../docs/OZ_LIVE_ROLLOUT.md) for the
+ordered import, replay, membership build, verification, and rollback gates.

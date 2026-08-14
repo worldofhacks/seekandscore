@@ -6,6 +6,7 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
+from seekandscore.acquisition.models import SourceDescriptor
 from seekandscore.acquisition.module import DESCRIPTOR as ACQUISITION_DESCRIPTOR
 from seekandscore.acquisition.repository import (
     AcquisitionRepository,
@@ -17,6 +18,15 @@ from seekandscore.deal.service import ResearchCaseService
 from seekandscore.engagement import EngagementSafetyStatus
 from seekandscore.engagement.module import DESCRIPTOR as ENGAGEMENT_DESCRIPTOR
 from seekandscore.geography.module import DESCRIPTOR as GEOGRAPHY_DESCRIPTOR
+from seekandscore.geography.opportunity_zones.membership import (
+    PostgresOpportunityZoneMembershipRepository,
+    UnavailableOpportunityZoneEvidenceRepository,
+)
+from seekandscore.geography.opportunity_zones.models import OpportunityZoneEvidenceReason
+from seekandscore.geography.opportunity_zones.source import (
+    CDFI_QOZ_2018_PRIVATE_DISPLAY_APPROVAL_ID,
+    CDFI_QOZ_2018_SOURCE,
+)
 from seekandscore.identity.module import DESCRIPTOR as IDENTITY_DESCRIPTOR
 from seekandscore.kernel import ModuleDescriptor
 from seekandscore.platform.module import DESCRIPTOR as PLATFORM_DESCRIPTOR
@@ -36,6 +46,20 @@ MODULES: tuple[ModuleDescriptor, ...] = (
     DEAL_DESCRIPTOR,
     ACQUISITION_DESCRIPTOR,
 )
+
+
+def oz_private_display_is_approved(
+    settings: Settings,
+    source: SourceDescriptor = CDFI_QOZ_2018_SOURCE,
+) -> bool:
+    """Require the runtime switch, exact approval, and reviewed source-display right together."""
+
+    return bool(
+        settings.oz_2018_private_display_enabled
+        and settings.oz_2018_private_display_approval_id
+        == CDFI_QOZ_2018_PRIVATE_DISPLAY_APPROVAL_ID
+        and source.display_allowed
+    )
 
 
 class CandidateRepository(Protocol):
@@ -78,11 +102,16 @@ class AppContainer:
         source_runs: AcquisitionRepository | None = None
         research: ResearchCaseService | None = None
         if settings.database_url:
-            engine = sa.create_engine(settings.database_url, pool_pre_ping=True)
+            engine = sa.create_engine(
+                settings.database_url,
+                pool_pre_ping=True,
+                hide_parameters=True,
+            )
             source_runs = PostgresAcquisitionRepository(engine)
             research = ResearchCaseService(PostgresResearchCaseRepository(engine))
         if settings.dataset_mode == "live" and source_runs is not None:
             live_source = sources.get("travis_tcad_parcels")
+            oz_display_enabled = oz_private_display_is_approved(settings)
             candidates: CandidateRepository = LiveCandidateRepository(
                 source_runs,
                 sources,
@@ -91,6 +120,13 @@ class AppContainer:
                     and settings.live_source_display_approval_id == TRAVIS_TCAD_DISPLAY_APPROVAL_ID
                     and live_source is not None
                     and live_source.display_allowed
+                ),
+                opportunity_zones=(
+                    PostgresOpportunityZoneMembershipRepository(engine)
+                    if oz_display_enabled
+                    else UnavailableOpportunityZoneEvidenceRepository(
+                        OpportunityZoneEvidenceReason.DISPLAY_NOT_APPROVED
+                    )
                 ),
             )
         else:

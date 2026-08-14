@@ -15,6 +15,10 @@ import {
   parseCandidateQuery,
   type CandidateQuery,
 } from "@/lib/candidate-query";
+import {
+  candidateHasOpportunityZoneEvidence,
+  mapOpportunityZoneEvidence,
+} from "@/lib/opportunity-zone";
 
 const STRATEGIES: Record<string, CandidateStrategy> = {
   assemblage: "Land banking",
@@ -83,6 +87,7 @@ function isCandidatePage(value: unknown): value is ApiCandidatePage {
       applied.min_acres <= applied.max_acres);
   return (
     Array.isArray(page.items) &&
+    page.items.every(candidateHasOpportunityZoneEvidence) &&
     typeof page.dataset_mode === "string" &&
     typeof page.read_model_version === "string" &&
     Number.isInteger(page.total) &&
@@ -178,6 +183,48 @@ function sourceObservationFor(candidate: ApiCandidateReadModel) {
   };
 }
 
+function opportunityZoneEvidenceDatum(candidate: ApiCandidateReadModel): EvidenceDatum {
+  const opportunityZone = mapOpportunityZoneEvidence(candidate);
+  const labels = {
+    inside: "Inside designated tract",
+    outside: "Outside designated tracts",
+    boundary_review: "Boundary review required",
+    unavailable: "Geographic result unavailable",
+  } as const;
+  const details = {
+    inside:
+      "Parcel geometry is strictly inside one 2018 designated tract. This geographic result does not establish tax qualification.",
+    outside:
+      "Parcel geometry does not intersect a 2018 designated tract in this evidence snapshot. This geographic result does not establish tax qualification.",
+    boundary_review:
+      opportunityZone.reasonCode === "designation_geometry_repaired"
+        ? "The designation geometry required repair; no inside or outside conclusion is represented until human review."
+        : opportunityZone.reasonCode === "parcel_geometry_repaired"
+          ? "The parcel geometry required repair; no inside or outside conclusion is represented until human review."
+          : "Parcel geometry intersects a designation boundary; no inside or outside conclusion is represented.",
+    unavailable:
+      "The platform has no complete evidence snapshot for this geographic classification and does not infer a result.",
+  } as const;
+  return {
+    id: `${candidate.id}-opportunity-zone`,
+    label: "2018 Opportunity Zone geography",
+    value: labels[opportunityZone.classification],
+    status:
+      opportunityZone.classification === "inside" ||
+      opportunityZone.classification === "outside"
+        ? "verified"
+        : opportunityZone.classification === "boundary_review"
+          ? "conflicting"
+          : "unknown",
+    source:
+      opportunityZone.designation?.sourceId ??
+      opportunityZone.parcelGeometry?.sourceId ??
+      "No complete overlay evidence",
+    observedAt: opportunityZone.classifiedAt ?? candidate.as_of,
+    detail: details[opportunityZone.classification],
+  };
+}
+
 function observationValue(candidate: ApiCandidateReadModel): string | null {
   const source = candidate.source_observation;
   if (!source) return null;
@@ -228,6 +275,7 @@ function evidenceFor(candidate: ApiCandidateReadModel): EvidenceDatum[] {
       observedAt: candidate.as_of,
       detail: "Freshness is evaluated against the configured source cadence.",
     },
+    opportunityZoneEvidenceDatum(candidate),
   ];
 
   evidence.splice(1, 0, {
@@ -245,6 +293,54 @@ function evidenceFor(candidate: ApiCandidateReadModel): EvidenceDatum[] {
   return evidence;
 }
 
+function opportunityZoneRisk(candidate: ApiCandidateReadModel) {
+  const evidence = candidate.opportunity_zone_evidence;
+  if (evidence.classification === "inside") {
+    return {
+      id: `${candidate.id}-opportunity-zone`,
+      label: "Tax qualification is not established",
+      detail:
+        "The spatial match is geographic screening evidence only; entity, fund, business, timing, and other tax requirements remain outside this platform.",
+      severity: "watch" as const,
+    };
+  }
+  if (evidence.classification === "outside") {
+    return {
+      id: `${candidate.id}-opportunity-zone`,
+      label: "Outside 2018 designated geography",
+      detail:
+        "The parcel is outside designated tracts in the versioned snapshot; later boundary or source changes are not inferred.",
+      severity: "watch" as const,
+    };
+  }
+  if (evidence.classification === "boundary_review") {
+    const repairedGeometry = evidence.reason_code === "parcel_geometry_repaired";
+    const repairedDesignation =
+      evidence.reason_code === "designation_geometry_repaired";
+    return {
+      id: `${candidate.id}-opportunity-zone`,
+      label: repairedDesignation
+        ? "Repaired designation geometry requires review"
+        : repairedGeometry
+          ? "Repaired parcel geometry requires review"
+          : "Opportunity Zone boundary review required",
+      detail: repairedDesignation
+        ? "The source designation geometry required repair. Human review is required; the platform reports neither inside nor outside."
+        : repairedGeometry
+          ? "The source parcel geometry required repair. Human review is required; the platform reports neither inside nor outside."
+          : "The parcel intersects a designation boundary. A survey-grade human review is required; the platform reports neither inside nor outside.",
+      severity: "elevated" as const,
+    };
+  }
+  return {
+    id: `${candidate.id}-opportunity-zone`,
+    label: "Opportunity Zone geography unavailable",
+    detail:
+      "A complete parcel-to-designation evidence snapshot is unavailable, so no geographic classification is represented.",
+    severity: "elevated" as const,
+  };
+}
+
 function mapCandidate(candidate: ApiCandidateReadModel): CandidateSummary {
   const evidence = evidenceFor(candidate);
   const needsIdentityReview = candidate.evidence.unresolved_conflict_count > 0;
@@ -258,6 +354,7 @@ function mapCandidate(candidate: ApiCandidateReadModel): CandidateSummary {
     name: candidate.display_name,
     locality: candidate.locality,
     county: candidate.county_name.replace(/ County$/, ""),
+    jurisdictionId: candidate.jurisdiction_id,
     parcelId: candidate.parcel_id,
     acreage: candidate.acreage,
     strategy: screeningOnly
@@ -273,6 +370,7 @@ function mapCandidate(candidate: ApiCandidateReadModel): CandidateSummary {
     newSinceLastReview: candidate.previous_rank === null,
     materialChange: candidate.material_change,
     evidence,
+    opportunityZone: mapOpportunityZoneEvidence(candidate),
     screeningOnly,
     sourceObservation,
     risks: [
@@ -290,12 +388,7 @@ function mapCandidate(candidate: ApiCandidateReadModel): CandidateSummary {
         detail: "No title, survey, legal, tax, or environmental conclusion is represented.",
         severity: "watch",
       },
-      {
-        id: `${candidate.id}-source`,
-        label: "Opportunity Zone status unverified",
-        detail: "Opportunity Zone status remains unverified until a versioned spatial overlay completes.",
-        severity: "watch",
-      },
+      opportunityZoneRisk(candidate),
     ],
     outreachGate: {
       status: "blocked",
@@ -325,6 +418,15 @@ export function mapApiCandidatePage(
   page: ApiCandidatePage,
   query: CandidateQuery = parseCandidateQuery({}),
 ): TopQueueSnapshot {
+  if (!isCandidatePage(page)) {
+    return emptyLiveSnapshot(
+      "The live candidate API returned an incompatible cohort or evidence contract.",
+      "unavailable",
+      undefined,
+      false,
+      query,
+    );
+  }
   if (page.dataset_mode !== "live") {
     return emptyLiveSnapshot(
       "The candidate API did not return a verified live dataset. No records were displayed.",
@@ -419,7 +521,7 @@ export async function loadTopQueueSnapshot(
     }
     if (!isCandidatePage(body)) {
       return emptyLiveSnapshot(
-        "The live candidate API returned an incompatible cohort contract.",
+        "The live candidate API returned an incompatible cohort or evidence contract.",
         "error",
         undefined,
         false,

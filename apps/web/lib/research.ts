@@ -4,6 +4,8 @@ import type {
   ResearchStatus,
 } from "@seekandscore/contracts";
 
+import { candidateHasOpportunityZoneEvidence } from "@/lib/opportunity-zone";
+
 export interface ResearchCaseCreateInput {
   status?: ResearchStatus;
   operator_note?: string | null;
@@ -115,6 +117,7 @@ function isCandidateDossier(
     Boolean(candidate) &&
     typeof candidate === "object" &&
     candidate?.id === candidateId &&
+    candidateHasOpportunityZoneEvidence(candidate) &&
     Array.isArray(dossier.gates) &&
     dossier.gates.every(isVerificationGate) &&
     Boolean(controls) &&

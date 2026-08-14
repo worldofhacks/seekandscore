@@ -32,7 +32,18 @@ const researchCase: ApiResearchCase = {
 };
 
 const dossier = {
-  candidate: { id: candidateId },
+  candidate: {
+    id: candidateId,
+    opportunity_zone_status: "review",
+    opportunity_zone_evidence: {
+      classification: "unavailable",
+      reason_code: "display_not_approved",
+      method: null,
+      classified_at: null,
+      parcel_geometry: null,
+      designation: null,
+    },
+  },
   region_id: "us-tx-central-texas",
   gates: [],
   research_case: researchCase,
@@ -129,6 +140,25 @@ describe("saved research client", () => {
             ...dossier,
             candidate: { ...dossier.candidate, id: "different-candidate" },
           }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    await expect(getCandidateDossier(candidateId)).rejects.toMatchObject({
+      code: "unavailable",
+      status: 502,
+    });
+  });
+
+  it("rejects a dossier that omits the versioned OZ evidence contract", async () => {
+    const candidateWithoutEvidence = { ...dossier.candidate } as Record<string, unknown>;
+    delete candidateWithoutEvidence.opportunity_zone_evidence;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ ...dossier, candidate: candidateWithoutEvidence }),
           { status: 200 },
         ),
       ),

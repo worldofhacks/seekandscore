@@ -64,6 +64,56 @@ export interface OutreachGate {
   blockers: string[];
 }
 
+export type OpportunityZoneClassification =
+  | "inside"
+  | "outside"
+  | "boundary_review"
+  | "unavailable";
+
+export type OpportunityZoneReasonCode =
+  | "matched_designated_tract"
+  | "no_designated_tract_intersection"
+  | "parcel_intersects_designation_boundary"
+  | "parcel_geometry_repaired"
+  | "designation_geometry_repaired"
+  | "parcel_geometry_unavailable"
+  | "designation_layer_unavailable"
+  | "membership_snapshot_unavailable"
+  | "display_not_approved";
+
+export interface OpportunityZoneParcelGeometryEvidence {
+  sourceId: string;
+  sourceRecordId: string;
+  artifactSha256: string;
+  observedAt: string;
+  geometryRepaired: boolean;
+  repairMethod: string | null;
+}
+
+export interface OpportunityZoneDesignationEvidence {
+  roundId: string;
+  tractGeoid: string | null;
+  intersectingTractGeoids: string[];
+  censusVintage: number;
+  designationStatus: "effective";
+  effectiveFrom: string;
+  effectiveTo: string;
+  sourceId: string;
+  sourceArtifactSha256: string;
+  authorityUri: string;
+  geometryRepaired: boolean;
+  repairMethod: string | null;
+}
+
+export interface OpportunityZoneEvidence {
+  classification: OpportunityZoneClassification;
+  reasonCode: OpportunityZoneReasonCode;
+  method: "postgis_strict_interior_v1" | null;
+  classifiedAt: string | null;
+  parcelGeometry: OpportunityZoneParcelGeometryEvidence | null;
+  designation: OpportunityZoneDesignationEvidence | null;
+}
+
 export interface CandidateSummary {
   id: string;
   rank: number;
@@ -88,6 +138,8 @@ export interface CandidateSummary {
   outreachGate: OutreachGate;
   screeningOnly?: boolean;
   sourceObservation?: SourceObservation;
+  jurisdictionId: string;
+  opportunityZone: OpportunityZoneEvidence;
 }
 
 export interface SourceObservationFields {
@@ -161,6 +213,39 @@ export interface ApiEvidenceSummary {
   freshness: string;
 }
 
+export interface ApiOpportunityZoneParcelGeometryEvidence {
+  source_id: string;
+  source_record_id: string;
+  artifact_sha256: string;
+  observed_at: string;
+  geometry_repaired: boolean;
+  repair_method: string | null;
+}
+
+export interface ApiOpportunityZoneDesignationEvidence {
+  round_id: string;
+  tract_geoid: string | null;
+  intersecting_tract_geoids: string[];
+  census_vintage: number;
+  designation_status: "effective";
+  effective_from: string;
+  effective_to: string;
+  source_id: string;
+  source_artifact_sha256: string;
+  authority_uri: string;
+  geometry_repaired: boolean;
+  repair_method: string | null;
+}
+
+export interface ApiOpportunityZoneEvidence {
+  classification: OpportunityZoneClassification;
+  reason_code: OpportunityZoneReasonCode;
+  method: "postgis_strict_interior_v1" | null;
+  classified_at: string | null;
+  parcel_geometry: ApiOpportunityZoneParcelGeometryEvidence | null;
+  designation: ApiOpportunityZoneDesignationEvidence | null;
+}
+
 export interface ApiCandidateReadModel {
   id: string;
   display_name: string;
@@ -183,6 +268,7 @@ export interface ApiCandidateReadModel {
   likely_basis: number;
   thesis: string;
   opportunity_zone_status: "effective" | "outside" | "review";
+  opportunity_zone_evidence: ApiOpportunityZoneEvidence;
   next_action: string;
   material_change: string | null;
   evidence: ApiEvidenceSummary;

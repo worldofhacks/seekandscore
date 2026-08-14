@@ -8,6 +8,9 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from seekandscore.acquisition.models import SourceRunProfile
+from seekandscore.geography.opportunity_zones.source import (
+    CDFI_QOZ_2018_PRIVATE_DISPLAY_APPROVAL_ID,
+)
 from seekandscore.registry.sources import (
     TRAVIS_TCAD_ACQUISITION_APPROVAL_ID,
     TRAVIS_TCAD_AUTHORIZED_CITIES,
@@ -79,6 +82,8 @@ class Settings(BaseSettings):
     ingestion_max_retries: int = Field(default=3, ge=0, le=5)
     live_source_display_enabled: bool = False
     live_source_display_approval_id: str | None = None
+    oz_2018_private_display_enabled: bool = False
+    oz_2018_private_display_approval_id: str | None = None
     raw_artifact_root: str = "var/raw-artifacts"
 
     object_storage_endpoint: str | None = None
@@ -180,6 +185,19 @@ class Settings(BaseSettings):
             self.outreach_mode is not OutreachMode.DISABLED or self.outreach_send_enabled
         ):
             raise ValueError("live source display requires outreach to remain disabled")
+        if self.oz_2018_private_display_enabled:
+            if (
+                self.oz_2018_private_display_approval_id
+                != CDFI_QOZ_2018_PRIVATE_DISPLAY_APPROVAL_ID
+            ):
+                raise ValueError(
+                    "private 2018 QOZ display requires the approved "
+                    "OZ_2018_PRIVATE_DISPLAY_APPROVAL_ID"
+                )
+            if not self.live_source_display_enabled:
+                raise ValueError("private 2018 QOZ display requires approved parcel display")
+            if self.outreach_mode is not OutreachMode.DISABLED or self.outreach_send_enabled:
+                raise ValueError("private 2018 QOZ display requires outreach to remain disabled")
 
         if self.alert_delivery_mode is AlertDeliveryMode.PROVIDER:
             if self.app_env is not AppEnvironment.PRODUCTION:

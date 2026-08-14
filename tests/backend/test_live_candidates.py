@@ -750,7 +750,7 @@ def test_live_candidate_api_serves_only_durable_projection_and_validates_cursor(
     assert response.json()["dataset_mode"] == "live"
     assert response.json()["total"] == 1
     assert "synthetic" not in response.text.lower()
-    assert response.headers["etag"].startswith('"live-assessor-explorer-v2:')
+    assert response.headers["etag"].startswith('"live-assessor-oz-evidence-v3:')
     assert malformed.status_code == 400
     assert malformed.json()["detail"] == "cursor is malformed"
     assert detail.status_code == 200

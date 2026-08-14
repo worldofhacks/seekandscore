@@ -9,6 +9,7 @@ from pathlib import PurePosixPath
 from uuid import UUID, uuid4, uuid5
 
 import httpx
+import sqlalchemy as sa
 
 from seekandscore.acquisition.adapters.travis_tcad import (
     ArcGisErrorResponse,
@@ -27,6 +28,7 @@ from seekandscore.acquisition.store import (
     ArtifactStore,
     ArtifactStoreError,
 )
+from seekandscore.platform.errors import durable_error_detail
 from seekandscore.registry.sources import TRAVIS_TCAD_ACQUISITION_APPROVAL_ID
 
 ARTIFACT_NAMESPACE = UUID("86066bca-12b7-4e7c-adc8-bc57ce7bb2b9")
@@ -135,6 +137,7 @@ class AcquisitionService:
                 )
                 response.raise_for_status()
                 retrieved_at = self.clock()
+                self.adapter.validate_page_before_persistence(content=response.content)
                 artifact = self._persist_artifact(
                     content=response.content,
                     params=params,
@@ -209,6 +212,7 @@ class AcquisitionService:
             IncompleteCohortError,
             ArtifactCollisionError,
             ArtifactStoreError,
+            sa.exc.SQLAlchemyError,
             OSError,
         ) as error:
             failed = run.model_copy(
@@ -222,7 +226,13 @@ class AcquisitionService:
                     "artifact_ids": tuple(artifacts),
                     "partial": bool(artifacts),
                     "error_code": type(error).__name__,
-                    "error_detail": str(error)[:1000],
+                    "error_detail": durable_error_detail(
+                        error,
+                        database_fallback=(
+                            "Database persistence rejected the acquisition record; "
+                            "statement parameters were withheld."
+                        ),
+                    ),
                 }
             )
             self.repository.save_run(failed)

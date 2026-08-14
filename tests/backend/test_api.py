@@ -34,7 +34,7 @@ def test_version_declares_bounded_contexts(client: TestClient) -> None:
     payload = response.json()
     assert payload["version"] == "0.1.0"
     assert payload["api_version"] == "v1"
-    assert payload["read_model_version"] == "live-assessor-explorer-v2"
+    assert payload["read_model_version"] == "live-assessor-oz-evidence-v3"
     assert payload["dataset_mode"] == "live"
     assert payload["candidate_serving_mode"] == "unavailable"
     assert "synthetic" not in response.text.lower()
@@ -58,6 +58,7 @@ def test_capabilities_fail_closed_by_default(client: TestClient) -> None:
         "candidate_serving_mode": "unavailable",
         "candidate_read_model_ready": False,
         "live_candidate_display_enabled": False,
+        "oz_2018_private_display_enabled": False,
         "ingestion_enabled": False,
         "research_writes_enabled": False,
         "research_store_ready": False,

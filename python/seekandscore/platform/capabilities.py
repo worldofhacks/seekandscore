@@ -14,6 +14,7 @@ class PlatformCapabilities(BaseModel):
     candidate_serving_mode: str
     candidate_read_model_ready: bool
     live_candidate_display_enabled: bool
+    oz_2018_private_display_enabled: bool
     ingestion_enabled: bool
     research_writes_enabled: bool
     research_store_ready: bool
@@ -38,6 +39,7 @@ class PlatformCapabilities(BaseModel):
             candidate_serving_mode=candidate_serving_mode,
             candidate_read_model_ready=candidate_read_model_ready,
             live_candidate_display_enabled=live_candidate_display_enabled,
+            oz_2018_private_display_enabled=settings.oz_2018_private_display_enabled,
             ingestion_enabled=settings.ingestion_enabled,
             research_writes_enabled=settings.research_writes_enabled,
             research_store_ready=research_store_ready,

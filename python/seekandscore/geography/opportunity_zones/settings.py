@@ -5,6 +5,9 @@ from enum import StrEnum
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from seekandscore.geography.opportunity_zones.membership import (
+    OZ_MEMBERSHIP_BUILD_ACTIVATION_ID,
+)
 from seekandscore.geography.opportunity_zones.source import CDFI_QOZ_2018_ACTIVATION_ID
 
 
@@ -29,6 +32,8 @@ class OpportunityZoneImportSettings(BaseSettings):
     app_env: ImportEnvironment = ImportEnvironment.DEVELOPMENT
     oz_2018_import_enabled: bool = False
     oz_2018_import_activation_id: str | None = None
+    oz_2018_membership_build_enabled: bool = False
+    oz_2018_membership_build_activation_id: str | None = None
     database_url: str | None = None
     object_storage_endpoint: str | None = None
     object_storage_region: str = "auto"
@@ -42,21 +47,28 @@ class OpportunityZoneImportSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_import_activation(self) -> "OpportunityZoneImportSettings":
-        if not self.oz_2018_import_enabled:
-            return self
-        if self.app_env not in {ImportEnvironment.STAGING, ImportEnvironment.PRODUCTION}:
-            raise ValueError("2018 QOZ import can run only in staging or production")
-        if self.oz_2018_import_activation_id != CDFI_QOZ_2018_ACTIVATION_ID:
-            raise ValueError("2018 QOZ import requires the exact reviewed activation ID")
-        if not self.database_url:
-            raise ValueError("2018 QOZ import requires DATABASE_URL")
-        if not all(
-            (
-                self.object_storage_endpoint,
-                self.object_storage_bucket,
-                self.object_storage_access_key_id,
-                self.object_storage_secret_access_key,
-            )
+        enabled = self.oz_2018_import_enabled or self.oz_2018_membership_build_enabled
+        if enabled and self.app_env not in {
+            ImportEnvironment.STAGING,
+            ImportEnvironment.PRODUCTION,
+        }:
+            raise ValueError("2018 QOZ mutation can run only in staging or production")
+        if enabled and not self.database_url:
+            raise ValueError("2018 QOZ mutation requires DATABASE_URL")
+        if self.oz_2018_import_enabled:
+            if self.oz_2018_import_activation_id != CDFI_QOZ_2018_ACTIVATION_ID:
+                raise ValueError("2018 QOZ import requires the exact reviewed activation ID")
+            if not all(
+                (
+                    self.object_storage_endpoint,
+                    self.object_storage_bucket,
+                    self.object_storage_access_key_id,
+                    self.object_storage_secret_access_key,
+                )
+            ):
+                raise ValueError("2018 QOZ import requires durable S3-compatible artifact storage")
+        if self.oz_2018_membership_build_enabled and (
+            self.oz_2018_membership_build_activation_id != OZ_MEMBERSHIP_BUILD_ACTIVATION_ID
         ):
-            raise ValueError("2018 QOZ import requires durable S3-compatible artifact storage")
+            raise ValueError("2018 QOZ membership build requires the exact reviewed activation ID")
         return self

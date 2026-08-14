@@ -1,6 +1,7 @@
 """Replay-safe PostGIS persistence for frozen Opportunity Zone geography."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import AbstractContextManager, contextmanager, suppress
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
@@ -14,6 +15,7 @@ from seekandscore.acquisition.repository import raw_artifact_table
 from seekandscore.geography.opportunity_zones.models import (
     ImportOutcome,
     OpportunityZoneImportRun,
+    OpportunityZoneImportStatus,
     OpportunityZoneRound,
     OpportunityZoneTract,
 )
@@ -23,8 +25,14 @@ class OpportunityZonePersistenceError(RuntimeError):
     """The database contains a partial/conflicting frozen layer or rejects its geometry."""
 
 
+OZ_STATIC_IMPORT_LOCK_NAMESPACE = 1_397_052_500
+OZ_STATIC_IMPORT_LOCK_KEY = "seekandscore:cdfi-qoz-2018:static-import"
+
+
 class OpportunityZoneRepository(Protocol):
     def is_ready(self) -> bool: ...
+
+    def import_lock(self) -> AbstractContextManager[None]: ...
 
     def register_source(self, source: SourceDescriptor, *, registered_at: datetime) -> None: ...
 
@@ -56,6 +64,10 @@ class MemoryOpportunityZoneRepository:
     def is_ready(self) -> bool:
         return True
 
+    @contextmanager
+    def import_lock(self) -> Iterator[None]:
+        yield
+
     def register_source(self, source: SourceDescriptor, *, registered_at: datetime) -> None:
         del registered_at
         self.sources.setdefault(source.id, source)
@@ -64,6 +76,28 @@ class MemoryOpportunityZoneRepository:
         self.artifacts.setdefault((artifact.source_id, artifact.sha256), artifact)
 
     def save_run(self, run: OpportunityZoneImportRun) -> None:
+        existing = self.runs.get(run.id)
+        if existing is None:
+            if run.status is not OpportunityZoneImportStatus.RUNNING:
+                raise OpportunityZonePersistenceError(
+                    "QOZ import receipt must be inserted in running state"
+                )
+            self.runs[run.id] = run
+            return
+        if existing.status is not OpportunityZoneImportStatus.RUNNING:
+            raise OpportunityZonePersistenceError("terminal QOZ import receipt is immutable")
+        if run.status is OpportunityZoneImportStatus.RUNNING or (
+            run.source_id,
+            run.activation_id,
+            run.started_at,
+            run.expected_tracts,
+        ) != (
+            existing.source_id,
+            existing.activation_id,
+            existing.started_at,
+            existing.expected_tracts,
+        ):
+            raise OpportunityZonePersistenceError("invalid QOZ import receipt transition")
         self.runs[run.id] = run
 
     def import_tracts(
@@ -142,6 +176,43 @@ class PostgresOpportunityZoneRepository:
         except sa.exc.SQLAlchemyError:
             return False
 
+    @contextmanager
+    def import_lock(self) -> Iterator[None]:
+        """Hold one non-blocking session lock across download, persistence, and replay proof."""
+
+        connection = self.engine.connect()
+        acquired = False
+        try:
+            acquired = bool(
+                connection.scalar(
+                    sa.text("SELECT pg_try_advisory_lock(:namespace, hashtext(:lock_key))"),
+                    {
+                        "namespace": OZ_STATIC_IMPORT_LOCK_NAMESPACE,
+                        "lock_key": OZ_STATIC_IMPORT_LOCK_KEY,
+                    },
+                )
+            )
+            if not acquired:
+                raise OpportunityZonePersistenceError(
+                    "another static 2018 QOZ import already holds the advisory lock"
+                )
+            yield
+        except sa.exc.SQLAlchemyError as error:
+            raise OpportunityZonePersistenceError(
+                "could not acquire or release the static 2018 QOZ import advisory lock"
+            ) from error
+        finally:
+            if acquired:
+                with suppress(sa.exc.SQLAlchemyError):
+                    connection.execute(
+                        sa.text("SELECT pg_advisory_unlock(:namespace, hashtext(:lock_key))"),
+                        {
+                            "namespace": OZ_STATIC_IMPORT_LOCK_NAMESPACE,
+                            "lock_key": OZ_STATIC_IMPORT_LOCK_KEY,
+                        },
+                    )
+            connection.close()
+
     def register_source(self, source: SourceDescriptor, *, registered_at: datetime) -> None:
         statement = (
             pg_insert(source_definition_table)
@@ -173,17 +244,46 @@ class PostgresOpportunityZoneRepository:
             connection.execute(statement)
 
     def save_run(self, run: OpportunityZoneImportRun) -> None:
-        statement = pg_insert(import_run_table).values(**run.model_dump(mode="python"))
-        statement = statement.on_conflict_do_update(
-            index_elements=[import_run_table.c.id],
-            set_={
-                column.name: getattr(statement.excluded, column.name)
-                for column in import_run_table.c
-                if column.name != "id"
-            },
-        )
         with self.engine.begin() as connection:
-            connection.execute(statement)
+            if run.status is OpportunityZoneImportStatus.RUNNING:
+                inserted = connection.execute(
+                    pg_insert(import_run_table)
+                    .values(**run.model_dump(mode="python"))
+                    .on_conflict_do_nothing(index_elements=[import_run_table.c.id])
+                    .returning(import_run_table.c.id)
+                ).scalar_one_or_none()
+                if inserted is None:
+                    raise OpportunityZonePersistenceError(
+                        "QOZ import receipt already exists and cannot be restarted"
+                    )
+                return
+
+            terminal_values = {
+                "status": run.status.value,
+                "completed_at": run.completed_at,
+                "source_artifact_id": run.source_artifact_id,
+                "source_artifact_sha256": run.source_artifact_sha256,
+                "imported_tracts": run.imported_tracts,
+                "error_code": run.error_code,
+                "error_detail": run.error_detail,
+            }
+            updated = connection.execute(
+                sa.update(import_run_table)
+                .where(
+                    import_run_table.c.id == run.id,
+                    import_run_table.c.status == OpportunityZoneImportStatus.RUNNING.value,
+                    import_run_table.c.source_id == run.source_id,
+                    import_run_table.c.activation_id == run.activation_id,
+                    import_run_table.c.started_at == run.started_at,
+                    import_run_table.c.expected_tracts == run.expected_tracts,
+                )
+                .values(**terminal_values)
+                .returning(import_run_table.c.id)
+            ).scalar_one_or_none()
+            if updated is None:
+                raise OpportunityZonePersistenceError(
+                    "QOZ import receipt transition was stale, terminal, or changed identity"
+                )
 
     def import_tracts(
         self,

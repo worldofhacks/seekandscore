@@ -1,6 +1,6 @@
 """Saved-research state, audit semantics, and authenticated API tests."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -14,6 +14,13 @@ from seekandscore.deal import (
     ResearchCaseConflictError,
     ResearchCaseService,
     ResearchStatus,
+)
+from seekandscore.geography.opportunity_zones.models import (
+    OpportunityZoneClassification,
+    OpportunityZoneDesignationEvidence,
+    OpportunityZoneEvidence,
+    OpportunityZoneEvidenceReason,
+    ParcelGeometryEvidence,
 )
 from seekandscore.platform.settings import Settings
 from seekandscore.readmodels.candidates import (
@@ -69,6 +76,53 @@ def candidate() -> CandidateReadModel:
 def service() -> tuple[ResearchCaseService, MemoryResearchCaseRepository]:
     repository = MemoryResearchCaseRepository()
     return ResearchCaseService(repository, clock=lambda: NOW), repository
+
+
+def candidate_with_zone(
+    classification: OpportunityZoneClassification,
+) -> CandidateReadModel:
+    tract_geoid = "48453001857" if classification is OpportunityZoneClassification.INSIDE else None
+    intersections = (
+        () if classification is OpportunityZoneClassification.OUTSIDE else ("48453001857",)
+    )
+    reason = {
+        OpportunityZoneClassification.INSIDE: (
+            OpportunityZoneEvidenceReason.MATCHED_DESIGNATED_TRACT
+        ),
+        OpportunityZoneClassification.OUTSIDE: (
+            OpportunityZoneEvidenceReason.NO_DESIGNATED_TRACT_INTERSECTION
+        ),
+        OpportunityZoneClassification.BOUNDARY_REVIEW: (
+            OpportunityZoneEvidenceReason.PARCEL_INTERSECTS_DESIGNATION_BOUNDARY
+        ),
+    }[classification]
+    evidence = OpportunityZoneEvidence(
+        classification=classification,
+        reason_code=reason,
+        method="postgis_strict_interior_v1",
+        classified_at=NOW,
+        parcel_geometry=ParcelGeometryEvidence(
+            source_id="travis_tcad_parcels",
+            source_record_id="700001",
+            artifact_sha256="a" * 64,
+            observed_at=NOW,
+            geometry_repaired=False,
+        ),
+        designation=OpportunityZoneDesignationEvidence(
+            round_id="us-federal-qoz-2018",
+            tract_geoid=tract_geoid,
+            intersecting_tract_geoids=intersections,
+            census_vintage=2010,
+            designation_status="effective",
+            effective_from=date(2018, 1, 1),
+            effective_to=date(2028, 12, 31),
+            source_id="federal_qoz_2018_designations",
+            source_artifact_sha256="b" * 64,
+            authority_uri="https://www.cdfifund.gov/opportunity-zones",
+            geometry_repaired=False,
+        ),
+    )
+    return candidate().model_copy(update={"opportunity_zone_evidence": evidence})
 
 
 def test_create_is_idempotent_and_case_ids_are_organization_scoped() -> None:
@@ -154,11 +208,54 @@ def test_dossier_gates_do_not_promote_unverified_oz_or_outreach() -> None:
 
     gates = {gate.key: gate for gate in dossier.gates}
     assert gates["source_freshness"].status == "satisfied"
-    assert gates["opportunity_zone"].status == "blocked"
+    assert gates["parcel_identity"].status == "open"
+    assert gates["opportunity_zone"].status == "not_available"
     assert gates["underwriting"].status == "blocked"
     assert gates["contact_prep"].status == "blocked"
     assert dossier.controls.contact_prep_enabled is False
     assert dossier.controls.outbound_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("classification", "zone_status", "zone_reason"),
+    (
+        (
+            OpportunityZoneClassification.INSIDE,
+            "satisfied",
+            "VERSIONED_SPATIAL_JOIN_INSIDE",
+        ),
+        (
+            OpportunityZoneClassification.OUTSIDE,
+            "satisfied",
+            "VERSIONED_SPATIAL_JOIN_OUTSIDE",
+        ),
+        (
+            OpportunityZoneClassification.BOUNDARY_REVIEW,
+            "open",
+            "SPATIAL_CLASSIFICATION_REVIEW_REQUIRED",
+        ),
+    ),
+)
+def test_dossier_geography_gates_follow_complete_oz_evidence(
+    classification: OpportunityZoneClassification,
+    zone_status: str,
+    zone_reason: str,
+) -> None:
+    research, _ = service()
+
+    dossier = research.dossier(
+        organization_id=ORG_ID,
+        candidate=candidate_with_zone(classification),
+    )
+
+    gates = {gate.key: gate for gate in dossier.gates}
+    assert gates["parcel_identity"].status == "satisfied"
+    assert gates["parcel_identity"].reason_code == "CANONICAL_PARCEL_GEOMETRY_RESOLVED"
+    assert gates["opportunity_zone"].status == zone_status
+    assert gates["opportunity_zone"].reason_code == zone_reason
+    assert "tax qualification" in gates["opportunity_zone"].detail
+    assert gates["underwriting"].status == "blocked"
+    assert gates["contact_prep"].status == "blocked"
 
 
 def test_dossier_never_satisfies_freshness_for_a_stale_candidate() -> None:

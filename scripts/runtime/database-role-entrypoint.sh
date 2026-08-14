@@ -34,6 +34,12 @@ case "$contract" in
   ingestion)
     python -m seekandscore.db.roles audit-ingestion-runtime
     ;;
+  oz-importer)
+    python -m seekandscore.db.roles audit-oz-importer-runtime
+    ;;
+  oz-membership)
+    python -m seekandscore.db.roles audit-oz-membership-runtime
+    ;;
   unprovisioned)
     echo "database role startup refused: this service has no approved runtime role" >&2
     exit 1

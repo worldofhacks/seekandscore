@@ -6,7 +6,7 @@ import type { CandidateSummary, TopQueueSnapshot } from "@seekandscore/contracts
 import { AppShell } from "./app-shell";
 import { OperatorConsole } from "./operator-console";
 
-function liveCandidate(): CandidateSummary {
+function liveCandidate(overrides: Partial<CandidateSummary> = {}): CandidateSummary {
   return {
     id: "candidate-1",
     rank: 1,
@@ -14,6 +14,7 @@ function liveCandidate(): CandidateSummary {
     name: "East Austin assessor parcel",
     locality: "Austin, TX",
     county: "Travis",
+    jurisdictionId: "us-tx-travis",
     parcelId: "TCAD-700001",
     acreage: 2.4,
     strategy: "Parcel screening",
@@ -44,6 +45,34 @@ function liveCandidate(): CandidateSummary {
         observedAt: "2026-08-13T10:30:00Z",
       },
     ],
+    opportunityZone: {
+      classification: "inside",
+      reasonCode: "matched_designated_tract",
+      method: "postgis_strict_interior_v1",
+      classifiedAt: "2026-08-14T09:00:00Z",
+      parcelGeometry: {
+        sourceId: "travis_tcad_parcel_geometry",
+        sourceRecordId: "OBJECTID-42",
+        artifactSha256: "b".repeat(64),
+        observedAt: "2026-08-13T10:30:00Z",
+        geometryRepaired: false,
+        repairMethod: null,
+      },
+      designation: {
+        roundId: "us-federal-qoz-2018",
+        tractGeoid: "48453001754",
+        intersectingTractGeoids: ["48453001754"],
+        censusVintage: 2010,
+        designationStatus: "effective",
+        effectiveFrom: "2018-01-01",
+        effectiveTo: "2028-12-31",
+        sourceId: "federal_qoz_2018_designations",
+        sourceArtifactSha256: "c".repeat(64),
+        authorityUri: "https://www.cdfifund.gov/opportunity-zones",
+        geometryRepaired: false,
+        repairMethod: null,
+      },
+    },
     screeningOnly: true,
     sourceObservation: {
       sourceId: "travis_tcad_parcels",
@@ -61,6 +90,7 @@ function liveCandidate(): CandidateSummary {
         "All outbound channels are disabled",
       ],
     },
+    ...overrides,
   };
 }
 
@@ -154,7 +184,14 @@ describe("strict live operator console", () => {
     expect(markup).toContain("Appraised value observation");
     expect(markup).toContain("Assessor observation · not an offer");
     expect(markup).toContain('aria-label="Screening score 67.4 out of 100"');
-    expect(markup).toContain("Opportunity Zone status");
+    expect(markup).toContain("2018 Opportunity Zone evidence");
+    expect(markup).toContain("Inside a 2018 designated tract");
+    expect(markup).toContain("2010 Census tracts");
+    expect(markup).toContain("48453001754");
+    expect(markup).toContain("federal_qoz_2018_designations");
+    expect(markup).toContain("postgis_strict_interior_v1");
+    expect(markup).toContain("does not establish tax, fund, business");
+    expect(markup).toContain("us-tx-travis");
     expect(markup).toContain("Research");
     expect(markup).toContain("Contact prep");
     expect(markup).toContain("Loading saved research");
@@ -195,6 +232,82 @@ describe("strict live operator console", () => {
     expect(markup).toContain("Clear filters");
     expect(markup).toContain("End of filtered cohort");
     expect(markup).not.toContain("Live candidate data could not be loaded");
+  });
+
+  it("renders outside, boundary-review, and display-gated OZ states without tax claims", () => {
+    const base = liveCandidate().opportunityZone;
+    const outside: CandidateSummary["opportunityZone"] = {
+      ...base,
+      classification: "outside",
+      reasonCode: "no_designated_tract_intersection",
+      designation: {
+        ...base.designation!,
+        tractGeoid: null,
+        intersectingTractGeoids: [],
+      },
+    };
+    const boundary: CandidateSummary["opportunityZone"] = {
+      ...base,
+      classification: "boundary_review",
+      reasonCode: "parcel_intersects_designation_boundary",
+      designation: {
+        ...base.designation!,
+        tractGeoid: null,
+        intersectingTractGeoids: ["48453001754", "48453001755"],
+      },
+    };
+    const designationRepaired: CandidateSummary["opportunityZone"] = {
+      ...base,
+      classification: "boundary_review",
+      reasonCode: "designation_geometry_repaired",
+      designation: {
+        ...base.designation!,
+        tractGeoid: null,
+        intersectingTractGeoids: ["48453001754"],
+        geometryRepaired: true,
+        repairMethod: "postgis_st_makevalid_collection_extract_v1",
+      },
+    };
+    const gated: CandidateSummary["opportunityZone"] = {
+      classification: "unavailable",
+      reasonCode: "display_not_approved",
+      method: null,
+      classifiedAt: null,
+      parcelGeometry: null,
+      designation: null,
+    };
+
+    for (const [evidence, expected] of [
+      [outside, "Outside 2018 designated tracts"],
+      [boundary, "Designation boundary review required"],
+      [designationRepaired, "Repaired designation geometry requires review"],
+      [gated, "Reference display not approved"],
+    ] as const) {
+      const snapshot = snapshotWithLiveCandidate();
+      snapshot.candidates = [liveCandidate({ opportunityZone: evidence })];
+      const markup = renderToStaticMarkup(<OperatorConsole snapshot={snapshot} />);
+      expect(markup).toContain(expected);
+      expect(markup).toContain("never establishes tax qualification");
+      expect(markup).not.toContain("Tax qualified");
+    }
+
+    const snapshot = snapshotWithLiveCandidate();
+    snapshot.candidates = [liveCandidate({ opportunityZone: gated })];
+    const gatedMarkup = renderToStaticMarkup(<OperatorConsole snapshot={snapshot} />);
+    expect(gatedMarkup).toContain("No underlying geographic result is disclosed");
+    expect(gatedMarkup).not.toContain("federal_qoz_2018_designations");
+    expect(gatedMarkup).not.toContain("sha256:");
+
+    const repairedSnapshot = snapshotWithLiveCandidate();
+    repairedSnapshot.candidates = [
+      liveCandidate({ opportunityZone: designationRepaired }),
+    ];
+    const repairedMarkup = renderToStaticMarkup(
+      <OperatorConsole snapshot={repairedSnapshot} />,
+    );
+    expect(repairedMarkup).toContain("Designation geometry repaired");
+    expect(repairedMarkup).toContain("postgis_st_makevalid_collection_extract_v1");
+    expect(repairedMarkup).not.toContain("coordinates");
   });
 
   it("renders an explicit zero-record error state when live data is unavailable", () => {

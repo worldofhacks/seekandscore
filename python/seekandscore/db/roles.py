@@ -17,10 +17,16 @@ from sqlalchemy.pool import NullPool
 
 API_RUNTIME_CAPABILITY_ROLE = "seekandscore_api_runtime"
 INGESTION_RUNTIME_CAPABILITY_ROLE = "seekandscore_ingestion_runtime"
+OZ_IMPORTER_RUNTIME_CAPABILITY_ROLE = "seekandscore_oz_importer_runtime"
+OZ_MEMBERSHIP_RUNTIME_CAPABILITY_ROLE = "seekandscore_oz_membership_runtime"
 DEFAULT_API_LOGIN_ROLE = "seekandscore_api"
 DEFAULT_INGESTION_LOGIN_ROLE = "seekandscore_ingestion"
+DEFAULT_OZ_IMPORTER_LOGIN_ROLE = "seekandscore_oz_importer"
+DEFAULT_OZ_MEMBERSHIP_LOGIN_ROLE = "seekandscore_oz_membership"
 ROLE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]{2,62}\Z")
 PASSWORD_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
+# pg_trigger.tgtype bitmask: ROW(1) | BEFORE(2) | INSERT(4) | UPDATE(16).
+POSTGRES_TRIGGER_BEFORE_ROW_INSERT_UPDATE = 23
 
 APPLICATION_SCHEMAS = (
     "platform",
@@ -63,21 +69,59 @@ class RuntimeRoleContract:
     insert_tables: frozenset[str]
     update_columns: frozenset[str]
     verifies_research_history: bool = False
+    allows_temporary: bool = False
+    required_triggers: tuple[tuple[str, str, str, str, str, int], ...] = ()
 
 
 API_ROLE_CONTRACT = RuntimeRoleContract(
     capability_role=API_RUNTIME_CAPABILITY_ROLE,
     default_login_role=DEFAULT_API_LOGIN_ROLE,
-    schema_usage=frozenset({"public", "platform", "registry", "raw", "observation", "deal"}),
+    schema_usage=frozenset(
+        {"public", "platform", "registry", "raw", "observation", "identity", "geo", "deal"}
+    ),
     select_tables=frozenset(
         {
             "registry.source_run",
             "raw.artifact",
             "observation.parcel_observation",
+            "identity.parcel",
+            "geo.opportunity_zone_round",
+            "geo.opportunity_zone_membership_snapshot",
+            "geo.opportunity_zone_membership_build_run",
+            "geo.opportunity_zone_membership",
             "deal.research_case",
         }
     ),
-    select_columns=frozenset(),
+    select_columns=frozenset(
+        {
+            "geo.parcel_geometry.observation_id",
+            "geo.parcel_geometry.parcel_id",
+            "geo.parcel_geometry.source_id",
+            "geo.parcel_geometry.source_record_id",
+            "geo.parcel_geometry.source_artifact_id",
+            "geo.parcel_geometry.source_artifact_sha256",
+            "geo.parcel_geometry.parser_version",
+            "geo.parcel_geometry.source_srid",
+            "geo.parcel_geometry.geometry_was_repaired",
+            "geo.parcel_geometry.geometry_repair_method",
+            "geo.parcel_geometry.observed_at",
+            "geo.opportunity_zone_tract.round_id",
+            "geo.opportunity_zone_tract.tract_geoid",
+            "geo.opportunity_zone_tract.census_vintage",
+            "geo.opportunity_zone_tract.certification_status",
+            "geo.opportunity_zone_tract.designation_status",
+            "geo.opportunity_zone_tract.effective_from",
+            "geo.opportunity_zone_tract.effective_from_precision",
+            "geo.opportunity_zone_tract.effective_to",
+            "geo.opportunity_zone_tract.state_name",
+            "geo.opportunity_zone_tract.county_name",
+            "geo.opportunity_zone_tract.source_artifact_id",
+            "geo.opportunity_zone_tract.source_artifact_sha256",
+            "geo.opportunity_zone_tract.geometry_was_repaired",
+            "geo.opportunity_zone_tract.geometry_repair_method",
+            "geo.opportunity_zone_tract.loaded_at",
+        }
+    ),
     insert_tables=frozenset({"deal.research_case"}),
     update_columns=frozenset(
         {
@@ -93,12 +137,15 @@ API_ROLE_CONTRACT = RuntimeRoleContract(
 INGESTION_ROLE_CONTRACT = RuntimeRoleContract(
     capability_role=INGESTION_RUNTIME_CAPABILITY_ROLE,
     default_login_role=DEFAULT_INGESTION_LOGIN_ROLE,
-    schema_usage=frozenset({"public", "registry", "raw", "observation"}),
+    schema_usage=frozenset({"public", "registry", "raw", "observation", "identity", "geo"}),
     select_tables=frozenset(
         {
             "registry.source_run",
             "raw.artifact",
             "observation.parcel_observation",
+            "public.spatial_ref_sys",
+            "identity.parcel",
+            "geo.parcel_geometry",
         }
     ),
     select_columns=frozenset({"observation.quarantined_record.id"}),
@@ -108,9 +155,119 @@ INGESTION_ROLE_CONTRACT = RuntimeRoleContract(
             "raw.artifact",
             "observation.parcel_observation",
             "observation.quarantined_record",
+            "identity.parcel",
+            "geo.parcel_geometry",
         }
     ),
     update_columns=frozenset({"registry.source_run.payload"}),
+)
+
+OZ_IMPORTER_ROLE_CONTRACT = RuntimeRoleContract(
+    capability_role=OZ_IMPORTER_RUNTIME_CAPABILITY_ROLE,
+    default_login_role=DEFAULT_OZ_IMPORTER_LOGIN_ROLE,
+    schema_usage=frozenset({"public", "registry", "raw", "geo"}),
+    select_tables=frozenset(
+        {
+            "registry.source_definition",
+            "raw.artifact",
+            "geo.opportunity_zone_import_run",
+            "geo.opportunity_zone_round",
+            "geo.opportunity_zone_tract",
+        }
+    ),
+    select_columns=frozenset(),
+    insert_tables=frozenset(
+        {
+            "registry.source_definition",
+            "raw.artifact",
+            "geo.opportunity_zone_import_run",
+            "geo.opportunity_zone_round",
+            "geo.opportunity_zone_tract",
+        }
+    ),
+    update_columns=frozenset(
+        {
+            "geo.opportunity_zone_import_run.status",
+            "geo.opportunity_zone_import_run.completed_at",
+            "geo.opportunity_zone_import_run.source_artifact_id",
+            "geo.opportunity_zone_import_run.source_artifact_sha256",
+            "geo.opportunity_zone_import_run.imported_tracts",
+            "geo.opportunity_zone_import_run.error_code",
+            "geo.opportunity_zone_import_run.error_detail",
+        }
+    ),
+    allows_temporary=True,
+    required_triggers=(
+        (
+            "geo",
+            "opportunity_zone_import_run",
+            "trg_oz_import_run_validate_transition",
+            "geo",
+            "validate_oz_import_run_transition",
+            POSTGRES_TRIGGER_BEFORE_ROW_INSERT_UPDATE,
+        ),
+    ),
+)
+
+OZ_MEMBERSHIP_ROLE_CONTRACT = RuntimeRoleContract(
+    capability_role=OZ_MEMBERSHIP_RUNTIME_CAPABILITY_ROLE,
+    default_login_role=DEFAULT_OZ_MEMBERSHIP_LOGIN_ROLE,
+    schema_usage=frozenset({"public", "registry", "observation", "identity", "geo"}),
+    select_tables=frozenset(
+        {
+            "registry.source_run",
+            "observation.parcel_observation",
+            "identity.parcel",
+            "geo.parcel_geometry",
+            "geo.opportunity_zone_import_run",
+            "geo.opportunity_zone_round",
+            "geo.opportunity_zone_tract",
+            "geo.opportunity_zone_membership_snapshot",
+            "geo.opportunity_zone_membership_build_run",
+            "geo.opportunity_zone_membership",
+        }
+    ),
+    select_columns=frozenset(),
+    insert_tables=frozenset(
+        {
+            "geo.opportunity_zone_membership_snapshot",
+            "geo.opportunity_zone_membership_build_run",
+            "geo.opportunity_zone_membership",
+        }
+    ),
+    update_columns=frozenset(
+        {
+            "geo.opportunity_zone_membership_build_run.status",
+            "geo.opportunity_zone_membership_build_run.completed_at",
+            "geo.opportunity_zone_membership_build_run.snapshot_id",
+            "geo.opportunity_zone_membership_build_run.evaluated_parcels",
+            "geo.opportunity_zone_membership_build_run.inside_count",
+            "geo.opportunity_zone_membership_build_run.outside_count",
+            "geo.opportunity_zone_membership_build_run.boundary_review_count",
+            "geo.opportunity_zone_membership_build_run.missing_geometry_count",
+            "geo.opportunity_zone_membership_build_run.error_code",
+            "geo.opportunity_zone_membership_build_run.error_detail",
+        }
+    ),
+    allows_temporary=True,
+    required_triggers=(
+        (
+            "geo",
+            "opportunity_zone_membership_build_run",
+            "trg_oz_membership_build_validate_transition",
+            "geo",
+            "validate_oz_membership_build_transition",
+            POSTGRES_TRIGGER_BEFORE_ROW_INSERT_UPDATE,
+        ),
+        (
+            "geo",
+            "opportunity_zone_membership",
+            "trg_oz_membership_validate_geometry_lineage",
+            "geo",
+            "validate_oz_membership_geometry_lineage",
+            POSTGRES_TRIGGER_BEFORE_ROW_INSERT_UPDATE,
+        ),
+    ),
 )
 
 
@@ -352,6 +509,34 @@ def provision_ingestion_runtime(
     )
 
 
+def provision_oz_importer_runtime(
+    owner_database_url: str,
+    *,
+    login_role: str = DEFAULT_OZ_IMPORTER_LOGIN_ROLE,
+    password: str,
+) -> str:
+    return provision_runtime_role(
+        owner_database_url,
+        contract=OZ_IMPORTER_ROLE_CONTRACT,
+        login_role=login_role,
+        password=password,
+    )
+
+
+def provision_oz_membership_runtime(
+    owner_database_url: str,
+    *,
+    login_role: str = DEFAULT_OZ_MEMBERSHIP_LOGIN_ROLE,
+    password: str,
+) -> str:
+    return provision_runtime_role(
+        owner_database_url,
+        contract=OZ_MEMBERSHIP_ROLE_CONTRACT,
+        login_role=login_role,
+        password=password,
+    )
+
+
 def _runtime_relation_privileges(connection: Connection) -> list[Mapping[str, object]]:
     rows = connection.execute(
         sa.text(
@@ -372,7 +557,7 @@ def _runtime_relation_privileges(connection: Connection) -> list[Mapping[str, ob
                 ORDER BY n.nspname, c.relname
                 """
         ),
-        {"schemas": list(APPLICATION_SCHEMAS)},
+        {"schemas": ["public", *APPLICATION_SCHEMAS]},
     ).mappings()
     return [cast(Mapping[str, object], row) for row in rows]
 
@@ -457,8 +642,10 @@ def audit_runtime_role(
             )
             if not bool(database_privileges["can_connect"]):
                 failures.append("runtime login cannot CONNECT to the application database")
-            if bool(database_privileges["can_create"] or database_privileges["can_temp"]):
-                failures.append("runtime login has database CREATE or TEMPORARY DDL capability")
+            if bool(database_privileges["can_create"]):
+                failures.append("runtime login has database CREATE capability")
+            if bool(database_privileges["can_temp"]) != contract.allows_temporary:
+                failures.append("runtime TEMPORARY privilege differs from the exact contract")
 
             schema_rows = connection.execute(
                 sa.text(
@@ -535,7 +722,7 @@ def audit_runtime_role(
                       AND NOT a.attisdropped
                     """
                 ),
-                {"schemas": list(APPLICATION_SCHEMAS)},
+                {"schemas": ["public", *APPLICATION_SCHEMAS]},
             ).mappings()
             select_columns: set[str] = set()
             update_columns: set[str] = set()
@@ -618,6 +805,64 @@ def audit_runtime_role(
                     failures.append(
                         "research-case validation/history trigger contract is not active"
                     )
+
+            for (
+                schema_name,
+                table_name,
+                trigger_name,
+                function_schema,
+                function_name,
+                trigger_type,
+            ) in contract.required_triggers:
+                required_trigger = (
+                    connection.execute(
+                        sa.text(
+                            """
+                            SELECT count(*) AS trigger_count,
+                                   bool_and(
+                                       t.tgenabled = 'O'
+                                       AND t.tgtype = :trigger_type
+                                       AND t.tgattr = ''::int2vector
+                                       AND t.tgnargs = 0
+                                       AND t.tgqual IS NULL
+                                       AND pn.nspname = :function_schema
+                                       AND p.proname = :function_name
+                                       AND p.prosecdef
+                                       AND p.proconfig @>
+                                           ARRAY['search_path=pg_catalog']::text[]
+                                       AND NOT has_function_privilege(
+                                           current_user, p.oid, 'EXECUTE'
+                                       )
+                                   ) AS trigger_safe
+                            FROM pg_trigger AS t
+                            JOIN pg_class AS c ON c.oid = t.tgrelid
+                            JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                            JOIN pg_proc AS p ON p.oid = t.tgfoid
+                            JOIN pg_namespace AS pn ON pn.oid = p.pronamespace
+                            WHERE n.nspname = :schema_name
+                              AND c.relname = :table_name
+                              AND t.tgname = :trigger_name
+                              AND NOT t.tgisinternal
+                            """
+                        ),
+                        {
+                            "schema_name": schema_name,
+                            "table_name": table_name,
+                            "trigger_name": trigger_name,
+                            "function_schema": function_schema,
+                            "function_name": function_name,
+                            "trigger_type": trigger_type,
+                        },
+                    )
+                    .mappings()
+                    .one()
+                )
+                if required_trigger["trigger_count"] != 1 or not bool(
+                    required_trigger["trigger_safe"]
+                ):
+                    failures.append(
+                        f"{schema_name}.{table_name} required trigger contract is not active"
+                    )
     except sa.exc.SQLAlchemyError as error:
         raise DatabaseRoleAuditError("runtime role audit could not query PostgreSQL") from error
     finally:
@@ -656,6 +901,30 @@ def audit_ingestion_runtime(
     )
 
 
+def audit_oz_importer_runtime(
+    runtime_database_url: str,
+    *,
+    expected_login_role: str = DEFAULT_OZ_IMPORTER_LOGIN_ROLE,
+) -> DatabaseRoleAudit:
+    return audit_runtime_role(
+        runtime_database_url,
+        contract=OZ_IMPORTER_ROLE_CONTRACT,
+        expected_login_role=expected_login_role,
+    )
+
+
+def audit_oz_membership_runtime(
+    runtime_database_url: str,
+    *,
+    expected_login_role: str = DEFAULT_OZ_MEMBERSHIP_LOGIN_ROLE,
+) -> DatabaseRoleAudit:
+    return audit_runtime_role(
+        runtime_database_url,
+        contract=OZ_MEMBERSHIP_ROLE_CONTRACT,
+        expected_login_role=expected_login_role,
+    )
+
+
 def _environment_value(environment: Mapping[str, str], name: str) -> str:
     value = environment.get(name, "")
     if not value:
@@ -672,6 +941,10 @@ def build_parser() -> argparse.ArgumentParser:
             "audit-api-runtime",
             "provision-ingestion-runtime",
             "audit-ingestion-runtime",
+            "provision-oz-importer-runtime",
+            "audit-oz-importer-runtime",
+            "provision-oz-membership-runtime",
+            "audit-oz-membership-runtime",
         ),
     )
     return parser
@@ -709,11 +982,55 @@ def main(argv: Sequence[str] | None = None) -> int:
                 password=_environment_value(environment, "INGESTION_DATABASE_PASSWORD"),
             )
             print(f"Provisioned restricted database login {login_role}.")
-        else:
+        elif args.command == "audit-ingestion-runtime":
             login_role = environment.get(
                 "INGESTION_DATABASE_LOGIN_ROLE", DEFAULT_INGESTION_LOGIN_ROLE
             )
             result = audit_ingestion_runtime(
+                _environment_value(environment, "DATABASE_URL"),
+                expected_login_role=login_role,
+            )
+            print(
+                f"Database role audit passed for {result.current_user} "
+                f"across {result.checked_relations} application relations."
+            )
+        elif args.command == "provision-oz-importer-runtime":
+            login_role = environment.get(
+                "OZ_IMPORTER_DATABASE_LOGIN_ROLE", DEFAULT_OZ_IMPORTER_LOGIN_ROLE
+            )
+            provision_oz_importer_runtime(
+                _environment_value(environment, "MIGRATION_DATABASE_URL"),
+                login_role=login_role,
+                password=_environment_value(environment, "OZ_IMPORTER_DATABASE_PASSWORD"),
+            )
+            print(f"Provisioned restricted database login {login_role}.")
+        elif args.command == "audit-oz-importer-runtime":
+            login_role = environment.get(
+                "OZ_IMPORTER_DATABASE_LOGIN_ROLE", DEFAULT_OZ_IMPORTER_LOGIN_ROLE
+            )
+            result = audit_oz_importer_runtime(
+                _environment_value(environment, "DATABASE_URL"),
+                expected_login_role=login_role,
+            )
+            print(
+                f"Database role audit passed for {result.current_user} "
+                f"across {result.checked_relations} application relations."
+            )
+        elif args.command == "provision-oz-membership-runtime":
+            login_role = environment.get(
+                "OZ_MEMBERSHIP_DATABASE_LOGIN_ROLE", DEFAULT_OZ_MEMBERSHIP_LOGIN_ROLE
+            )
+            provision_oz_membership_runtime(
+                _environment_value(environment, "MIGRATION_DATABASE_URL"),
+                login_role=login_role,
+                password=_environment_value(environment, "OZ_MEMBERSHIP_DATABASE_PASSWORD"),
+            )
+            print(f"Provisioned restricted database login {login_role}.")
+        else:
+            login_role = environment.get(
+                "OZ_MEMBERSHIP_DATABASE_LOGIN_ROLE", DEFAULT_OZ_MEMBERSHIP_LOGIN_ROLE
+            )
+            result = audit_oz_membership_runtime(
                 _environment_value(environment, "DATABASE_URL"),
                 expected_login_role=login_role,
             )

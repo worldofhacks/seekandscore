@@ -1,5 +1,6 @@
 """Official TCAD ArcGIS adapter contract tests."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -11,6 +12,7 @@ from seekandscore.acquisition.adapters.travis_tcad import (
     SourceSchemaError,
     TravisTcadArcGisAdapter,
     TravisTcadQuery,
+    _polygon_geojson,
 )
 from seekandscore.acquisition.models import RawArtifact
 
@@ -86,6 +88,8 @@ def test_parser_normalizes_money_provenance_and_replays_deterministically() -> N
     assert observation.improvement_value_cents == 15_000_000
     assert observation.land_value_cents == 35_000_000
     assert observation.artifact_sha256 == FIXTURE_SHA
+    assert observation.geometry_srid == 4326
+    assert json.loads(observation.geometry_geojson or "")["type"] == "MultiPolygon"
     assert observation.screening_only is True
 
 
@@ -116,3 +120,74 @@ def test_parser_fails_closed_on_schema_drift() -> None:
             content=content,
             artifact=artifact(),
         )
+
+
+@pytest.mark.parametrize("include_field_metadata", [False, True])
+def test_preflight_rejects_unapproved_field_and_attribute_names(
+    include_field_metadata: bool,
+) -> None:
+    payload = json.loads(FIXTURE.read_text())
+    if include_field_metadata:
+        payload["fields"].append({"name": "py_owner_name", "type": "esriFieldTypeString"})
+    payload["features"][0]["attributes"]["py_owner_name"] = "PROHIBITED"
+
+    with pytest.raises(SourceSchemaError, match="reviewed allowlist"):
+        TravisTcadArcGisAdapter(TravisTcadQuery()).validate_page_before_persistence(
+            content=json.dumps(payload).encode()
+        )
+
+
+@pytest.mark.parametrize(
+    ("spatial_reference", "message"),
+    [
+        (None, "feature-page schema"),
+        ({"wkid": 3857}, "WKID 4326"),
+    ],
+)
+def test_parser_fails_closed_without_exact_response_wkid(
+    spatial_reference: dict[str, int] | None,
+    message: str,
+) -> None:
+    payload = json.loads(FIXTURE.read_text())
+    if spatial_reference is None:
+        payload.pop("spatialReference")
+    else:
+        payload["spatialReference"] = spatial_reference
+
+    with pytest.raises(SourceSchemaError, match=message):
+        TravisTcadArcGisAdapter(TravisTcadQuery()).parse_page(
+            content=json.dumps(payload).encode(),
+            artifact=artifact(),
+        )
+
+
+def test_geometry_normalizer_groups_holes_and_multiple_outer_rings() -> None:
+    geometry = {
+        "rings": [
+            [[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]],
+            [[2, 2], [8, 2], [8, 8], [2, 8], [2, 2]],
+            [[20, 20], [20, 25], [25, 25], [25, 20], [20, 20]],
+        ]
+    }
+
+    normalized = json.loads(_polygon_geojson(geometry))
+
+    assert normalized["type"] == "MultiPolygon"
+    assert len(normalized["coordinates"]) == 2
+    assert sorted(len(polygon) for polygon in normalized["coordinates"]) == [1, 2]
+
+
+def test_parser_quarantines_missing_or_zero_area_geometry() -> None:
+    payload = json.loads(FIXTURE.read_text())
+    payload["features"][0]["geometry"] = {
+        "rings": [[[-97.61, 30.1], [-97.60, 30.1], [-97.59, 30.1]]]
+    }
+
+    observations, quarantined, _ = TravisTcadArcGisAdapter(TravisTcadQuery()).parse_page(
+        content=json.dumps(payload).encode(),
+        artifact=artifact(),
+    )
+
+    assert len(observations) == 1
+    assert len(quarantined) == 1
+    assert "zero area" in quarantined[0].reason_detail

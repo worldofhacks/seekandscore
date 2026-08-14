@@ -42,6 +42,7 @@ from seekandscore.geography.opportunity_zones.source import (
     CDFI_QOZ_2018_ROUND_ID,
     CDFI_QOZ_2018_SOURCE,
 )
+from seekandscore.platform.errors import durable_error_detail
 
 _ARTIFACT_NAMESPACE = UUID("d0b94987-f921-47b2-9375-9357486b0984")
 Clock = Callable[[], datetime]
@@ -102,6 +103,12 @@ class OpportunityZoneImportService:
             raise OpportunityZoneImportDisabledError(
                 "2018 QOZ import requires the exact reviewed activation ID"
             )
+
+        with self.repository.import_lock():
+            return self._execute_locked(activation_id)
+
+    def _execute_locked(self, activation_id: str) -> OpportunityZoneImportRun:
+        """Execute only while the repository holds the static-layer session lock."""
 
         started_at = self.clock()
         run = OpportunityZoneImportRun(
@@ -176,7 +183,13 @@ class OpportunityZoneImportService:
                     "source_artifact_id": artifact.id if artifact else None,
                     "source_artifact_sha256": artifact.sha256 if artifact else None,
                     "error_code": type(error).__name__,
-                    "error_detail": str(error)[:1000],
+                    "error_detail": durable_error_detail(
+                        error,
+                        database_fallback=(
+                            "Database persistence rejected the QOZ import; "
+                            "statement parameters were withheld."
+                        ),
+                    ),
                 }
             )
             self.repository.save_run(failed)

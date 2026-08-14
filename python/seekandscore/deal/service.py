@@ -17,6 +17,7 @@ from seekandscore.deal.models import (
     VerificationGateStatus,
 )
 from seekandscore.deal.repository import ResearchCaseRepository
+from seekandscore.geography.opportunity_zones.models import OpportunityZoneClassification
 from seekandscore.readmodels.candidates import CandidateReadModel
 
 RESEARCH_CASE_NAMESPACE = UUID("66c84799-6802-4e47-a44a-772c760b3e66")
@@ -177,19 +178,44 @@ class ResearchCaseService:
             else ""
         )
         freshness_current = candidate.evidence.freshness == "current"
+        zone_evidence = candidate.opportunity_zone_evidence
+        geometry_resolved = (
+            zone_evidence.classification is not OpportunityZoneClassification.UNAVAILABLE
+            and zone_evidence.parcel_geometry is not None
+            and zone_evidence.designation is not None
+        )
+        zone_evidence_ids = _zone_evidence_ids(candidate)
+        zone_gate = _zone_verification_gate(candidate)
         return CandidateDossier(
             candidate=candidate,
             region_id=CENTRAL_TEXAS_REGION_ID,
             gates=(
                 VerificationGate(
                     key=VerificationGateKey.PARCEL_IDENTITY,
-                    status=VerificationGateStatus.OPEN,
-                    reason_code="SOURCE_IDENTITY_ONLY",
+                    status=(
+                        VerificationGateStatus.SATISFIED
+                        if geometry_resolved
+                        else VerificationGateStatus.OPEN
+                    ),
+                    reason_code=(
+                        "CANONICAL_PARCEL_GEOMETRY_RESOLVED"
+                        if geometry_resolved
+                        else "SOURCE_IDENTITY_ONLY"
+                    ),
                     detail=(
-                        "The approved assessor identifier is present; canonical parcel and "
+                        "Canonical parcel identity and versioned parcel geometry lineage are "
+                        "present in the Opportunity Zone evidence snapshot."
+                        if geometry_resolved
+                        else "The approved assessor identifier is present; canonical parcel and "
                         "geometry resolution are not complete."
                     ),
-                    evidence_ids=(source_evidence_id,) if source_evidence_id else (),
+                    evidence_ids=(
+                        zone_evidence_ids
+                        if geometry_resolved
+                        else (source_evidence_id,)
+                        if source_evidence_id
+                        else ()
+                    ),
                 ),
                 VerificationGate(
                     key=VerificationGateKey.SOURCE_FRESHNESS,
@@ -206,15 +232,7 @@ class ResearchCaseService:
                     ),
                     evidence_ids=(source_evidence_id,) if source_evidence_id else (),
                 ),
-                VerificationGate(
-                    key=VerificationGateKey.OPPORTUNITY_ZONE,
-                    status=VerificationGateStatus.BLOCKED,
-                    reason_code="VERSIONED_SPATIAL_JOIN_REQUIRED",
-                    detail=(
-                        "Opportunity Zone status remains blocked until parcel geometry is joined "
-                        "to the correct frozen designation-round geometry."
-                    ),
-                ),
+                zone_gate,
                 VerificationGate(
                     key=VerificationGateKey.UNDERWRITING,
                     status=VerificationGateStatus.BLOCKED,
@@ -237,6 +255,74 @@ class ResearchCaseService:
             research_case=self.repository.get_by_candidate(organization_id, candidate.id),
             controls=DossierControls(contact_prep_enabled=False, outbound_enabled=False),
         )
+
+
+def _zone_evidence_ids(candidate: CandidateReadModel) -> tuple[str, ...]:
+    evidence = candidate.opportunity_zone_evidence
+    values: list[str] = []
+    if evidence.parcel_geometry is not None:
+        values.extend(
+            (
+                evidence.parcel_geometry.source_record_id,
+                evidence.parcel_geometry.artifact_sha256,
+            )
+        )
+    if evidence.designation is not None:
+        values.extend(
+            (
+                evidence.designation.round_id,
+                evidence.designation.source_artifact_sha256,
+                *evidence.designation.intersecting_tract_geoids,
+            )
+        )
+    return tuple(dict.fromkeys(value for value in values if value))
+
+
+def _zone_verification_gate(candidate: CandidateReadModel) -> VerificationGate:
+    evidence = candidate.opportunity_zone_evidence
+    evidence_ids = _zone_evidence_ids(candidate)
+    if evidence.classification is OpportunityZoneClassification.INSIDE:
+        return VerificationGate(
+            key=VerificationGateKey.OPPORTUNITY_ZONE,
+            status=VerificationGateStatus.SATISFIED,
+            reason_code="VERSIONED_SPATIAL_JOIN_INSIDE",
+            detail=(
+                "The parcel is strictly inside one effective 2018 designated tract in the "
+                "versioned screening snapshot; this does not establish tax qualification."
+            ),
+            evidence_ids=evidence_ids,
+        )
+    if evidence.classification is OpportunityZoneClassification.OUTSIDE:
+        return VerificationGate(
+            key=VerificationGateKey.OPPORTUNITY_ZONE,
+            status=VerificationGateStatus.SATISFIED,
+            reason_code="VERSIONED_SPATIAL_JOIN_OUTSIDE",
+            detail=(
+                "The parcel does not intersect an effective 2018 designated tract in the "
+                "versioned screening snapshot; this does not establish tax qualification."
+            ),
+            evidence_ids=evidence_ids,
+        )
+    if evidence.classification is OpportunityZoneClassification.BOUNDARY_REVIEW:
+        return VerificationGate(
+            key=VerificationGateKey.OPPORTUNITY_ZONE,
+            status=VerificationGateStatus.OPEN,
+            reason_code="SPATIAL_CLASSIFICATION_REVIEW_REQUIRED",
+            detail=(
+                "Versioned parcel and designation evidence is present, but a boundary or repaired "
+                "geometry requires review; no tax qualification is inferred."
+            ),
+            evidence_ids=evidence_ids,
+        )
+    return VerificationGate(
+        key=VerificationGateKey.OPPORTUNITY_ZONE,
+        status=VerificationGateStatus.NOT_AVAILABLE,
+        reason_code=f"OZ_EVIDENCE_{evidence.reason_code.value.upper()}",
+        detail=(
+            "Versioned Opportunity Zone evidence is unavailable, so no geographic or tax "
+            "qualification conclusion is made."
+        ),
+    )
 
 
 def _clean_optional(value: str | None) -> str | None:

@@ -15,6 +15,7 @@ from seekandscore.acquisition.models import (
     SourceRun,
     SourceRunProfile,
 )
+from seekandscore.identity import canonical_parcel_id
 
 
 class AcquisitionRepository(Protocol):
@@ -49,6 +50,7 @@ class AcquisitionRepository(Protocol):
         limit: int,
         offset: int = 0,
         artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
         cities: tuple[str, ...] | None = None,
         search_query: str | None = None,
         min_acres: float | None = None,
@@ -59,6 +61,7 @@ class AcquisitionRepository(Protocol):
         self,
         *,
         artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
         cities: tuple[str, ...] | None = None,
         search_query: str | None = None,
         min_acres: float | None = None,
@@ -150,6 +153,7 @@ class MemoryAcquisitionRepository:
         limit: int,
         offset: int = 0,
         artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
         cities: tuple[str, ...] | None = None,
         search_query: str | None = None,
         min_acres: float | None = None,
@@ -162,6 +166,8 @@ class MemoryAcquisitionRepository:
             if item.source_id != "travis_tcad_parcels":
                 continue
             if selected_artifacts is not None and item.artifact_id not in selected_artifacts:
+                continue
+            if parser_version is not None and item.parser_version != parser_version:
                 continue
             current = latest_by_parcel.get(item.local_parcel_id)
             if current is None or (item.observed_at, str(item.id)) > (
@@ -193,6 +199,7 @@ class MemoryAcquisitionRepository:
         self,
         *,
         artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
         cities: tuple[str, ...] | None = None,
         search_query: str | None = None,
         min_acres: float | None = None,
@@ -202,6 +209,7 @@ class MemoryAcquisitionRepository:
             self.list_latest_observations(
                 limit=len(self.observations),
                 artifact_ids=artifact_ids,
+                parser_version=parser_version,
                 cities=cities,
                 search_query=search_query,
                 min_acres=min_acres,
@@ -268,7 +276,39 @@ observation_table = sa.Table(
     sa.Column("artifact_sha256", sa.String(64), nullable=False),
     sa.Column("parser_version", sa.Text(), nullable=False),
     sa.Column("payload", sa.JSON(), nullable=False),
+    sa.Column("jurisdiction_id", sa.Text(), nullable=False),
+    sa.Column("local_parcel_id", sa.Text(), nullable=False),
+    sa.Column("observed_at", sa.DateTime(timezone=True), nullable=False),
     schema="observation",
+)
+
+parcel_identity_table = sa.Table(
+    "parcel",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("jurisdiction_id", sa.Text(), nullable=False),
+    sa.Column("local_parcel_id", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    schema="identity",
+)
+
+parcel_geometry_table = sa.Table(
+    "parcel_geometry",
+    metadata,
+    sa.Column("observation_id", sa.Uuid(), primary_key=True),
+    sa.Column("parcel_id", sa.Uuid(), nullable=False),
+    sa.Column("jurisdiction_id", sa.Text(), nullable=False),
+    sa.Column("local_parcel_id", sa.Text(), nullable=False),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("source_record_id", sa.Text(), nullable=False),
+    sa.Column("source_artifact_id", sa.Uuid(), nullable=False),
+    sa.Column("source_artifact_sha256", sa.String(64), nullable=False),
+    sa.Column("parser_version", sa.Text(), nullable=False),
+    sa.Column("source_srid", sa.Integer(), nullable=False),
+    sa.Column("geometry_was_repaired", sa.Boolean(), nullable=False),
+    sa.Column("geometry_repair_method", sa.Text()),
+    sa.Column("observed_at", sa.DateTime(timezone=True), nullable=False),
+    schema="geo",
 )
 
 quarantine_table = sa.Table(
@@ -386,6 +426,7 @@ class PostgresAcquisitionRepository:
             connection.execute(statement)
 
     def save_observations(self, observations: Iterable[NormalizedParcelObservation]) -> int:
+        materialized = tuple(observations)
         values = [
             {
                 "id": item.id,
@@ -394,9 +435,15 @@ class PostgresAcquisitionRepository:
                 "artifact_id": item.artifact_id,
                 "artifact_sha256": item.artifact_sha256,
                 "parser_version": item.parser_version,
-                "payload": item.model_dump(mode="json"),
+                "observed_at": item.observed_at,
+                # Geometry coordinates are deliberately excluded from the API-readable JSONB
+                # envelope. They exist only in geo.parcel_geometry's restricted typed column.
+                "payload": item.model_dump(
+                    mode="json",
+                    exclude={"geometry_srid", "geometry_geojson"},
+                ),
             }
-            for item in observations
+            for item in materialized
         ]
         if not values:
             return 0
@@ -409,7 +456,88 @@ class PostgresAcquisitionRepository:
         with self.engine.begin() as connection:
             result = connection.execute(statement)
             inserted_ids = tuple(result.scalars())
+            self._save_parcel_geometries(connection, materialized)
         return len(inserted_ids)
+
+    @staticmethod
+    def _save_parcel_geometries(
+        connection: sa.Connection,
+        observations: tuple[NormalizedParcelObservation, ...],
+    ) -> None:
+        geometry_observations = tuple(
+            item
+            for item in observations
+            if item.geometry_srid is not None and item.geometry_geojson is not None
+        )
+        if not geometry_observations:
+            return
+        identity_statement = (
+            pg_insert(parcel_identity_table)
+            .values(
+                [
+                    {
+                        "id": canonical_parcel_id(item.jurisdiction_id, item.local_parcel_id),
+                        "jurisdiction_id": item.jurisdiction_id,
+                        "local_parcel_id": item.local_parcel_id,
+                        "created_at": item.observed_at,
+                    }
+                    for item in geometry_observations
+                ]
+            )
+            .on_conflict_do_nothing()
+        )
+        connection.execute(identity_statement)
+        geometry_statement = sa.text(
+            """
+            WITH parsed AS (
+                SELECT ST_Transform(
+                    ST_SetSRID(ST_GeomFromGeoJSON(:geometry_geojson), :source_srid),
+                    3857
+                ) AS source_geometry
+            ), normalized AS (
+                SELECT source_geometry,
+                       ST_Multi(
+                           ST_CollectionExtract(ST_MakeValid(source_geometry), 3)
+                       ) AS normalized_geometry
+                FROM parsed
+            )
+            INSERT INTO geo.parcel_geometry (
+                observation_id, parcel_id, jurisdiction_id, local_parcel_id,
+                source_id, source_record_id,
+                source_artifact_id, source_artifact_sha256, parser_version, source_srid,
+                geometry, geometry_was_repaired, geometry_repair_method, observed_at
+            )
+            SELECT :observation_id, :parcel_id, :jurisdiction_id, :local_parcel_id,
+                   :source_id, :source_record_id,
+                   :source_artifact_id, :source_artifact_sha256, :parser_version, :source_srid,
+                   normalized_geometry, NOT ST_IsValid(source_geometry),
+                   CASE WHEN ST_IsValid(source_geometry) THEN NULL
+                        ELSE 'postgis_st_makevalid_collection_extract_v1' END,
+                   :observed_at
+            FROM normalized
+            ON CONFLICT (observation_id) DO NOTHING
+            """
+        )
+        connection.execute(
+            geometry_statement,
+            [
+                {
+                    "observation_id": item.id,
+                    "parcel_id": canonical_parcel_id(item.jurisdiction_id, item.local_parcel_id),
+                    "jurisdiction_id": item.jurisdiction_id,
+                    "local_parcel_id": item.local_parcel_id,
+                    "source_id": item.source_id,
+                    "source_record_id": item.source_record_id,
+                    "source_artifact_id": item.artifact_id,
+                    "source_artifact_sha256": item.artifact_sha256,
+                    "parser_version": item.parser_version,
+                    "source_srid": item.geometry_srid,
+                    "geometry_geojson": item.geometry_geojson,
+                    "observed_at": item.observed_at,
+                }
+                for item in geometry_observations
+            ],
+        )
 
     def save_quarantine(self, records: Iterable[QuarantinedRecord]) -> int:
         values = [
@@ -440,6 +568,7 @@ class PostgresAcquisitionRepository:
         limit: int,
         offset: int = 0,
         artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
         cities: tuple[str, ...] | None = None,
         search_query: str | None = None,
         min_acres: float | None = None,
@@ -450,6 +579,8 @@ class PostgresAcquisitionRepository:
         snapshot_filters = [observation_table.c.source_id == "travis_tcad_parcels"]
         if artifact_ids is not None:
             snapshot_filters.append(observation_table.c.artifact_id.in_(artifact_ids))
+        if parser_version is not None:
+            snapshot_filters.append(observation_table.c.parser_version == parser_version)
         ranked = (
             sa.select(
                 observation_table.c.payload,
@@ -514,6 +645,7 @@ class PostgresAcquisitionRepository:
         self,
         *,
         artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
         cities: tuple[str, ...] | None = None,
         search_query: str | None = None,
         min_acres: float | None = None,
@@ -524,6 +656,8 @@ class PostgresAcquisitionRepository:
         snapshot_filters = [observation_table.c.source_id == "travis_tcad_parcels"]
         if artifact_ids is not None:
             snapshot_filters.append(observation_table.c.artifact_id.in_(artifact_ids))
+        if parser_version is not None:
+            snapshot_filters.append(observation_table.c.parser_version == parser_version)
         ranked = (
             sa.select(
                 observation_table.c.payload,

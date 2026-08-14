@@ -26,6 +26,15 @@ function liveCandidate(overrides: Partial<CandidateSummary> = {}): CandidateSumm
     materialChange: null,
     risks: [],
     evidence: [],
+    jurisdictionId: "us-tx-travis",
+    opportunityZone: {
+      classification: "unavailable",
+      reasonCode: "membership_snapshot_unavailable",
+      method: null,
+      classifiedAt: null,
+      parcelGeometry: null,
+      designation: null,
+    },
     screeningOnly: true,
     outreachGate: {
       status: "blocked",

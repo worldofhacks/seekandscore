@@ -7,6 +7,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from seekandscore.geography.opportunity_zones.models import (
+    OpportunityZoneClassification,
+    OpportunityZoneEvidence,
+    OpportunityZoneEvidenceReason,
+)
 from seekandscore.identity import CandidateKind
 from seekandscore.version import READ_MODEL_VERSION
 
@@ -134,6 +139,10 @@ class CandidateReadModel(BaseModel):
     likely_basis: int = Field(ge=0)
     thesis: str
     opportunity_zone_status: OpportunityZoneStatus
+    opportunity_zone_evidence: OpportunityZoneEvidence = OpportunityZoneEvidence(
+        classification=OpportunityZoneClassification.UNAVAILABLE,
+        reason_code=OpportunityZoneEvidenceReason.MEMBERSHIP_SNAPSHOT_UNAVAILABLE,
+    )
     next_action: str
     material_change: str | None = None
     evidence: EvidenceSummary

@@ -2,11 +2,13 @@
 
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
 from seekandscore.acquisition.adapters import TravisTcadArcGisAdapter, TravisTcadQuery
 from seekandscore.acquisition.models import (
@@ -16,10 +18,32 @@ from seekandscore.acquisition.models import (
 )
 from seekandscore.acquisition.repository import MemoryAcquisitionRepository
 from seekandscore.acquisition.service import AcquisitionService, IngestionDisabledError
-from seekandscore.acquisition.store import FileArtifactStore
+from seekandscore.acquisition.store import ArtifactStore, FileArtifactStore
 from seekandscore.registry.sources import TRAVIS_TCAD_ACQUISITION_APPROVAL_ID
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tcad_page.json"
+
+
+class CountingArtifactStore:
+    def __init__(self, delegate: ArtifactStore) -> None:
+        self.delegate = delegate
+        self.write_count = 0
+
+    def put_if_absent(
+        self,
+        *,
+        key: str,
+        content: bytes,
+        media_type: str,
+        metadata: Mapping[str, str],
+    ) -> str:
+        self.write_count += 1
+        return self.delegate.put_if_absent(
+            key=key,
+            content=content,
+            media_type=media_type,
+            metadata=metadata,
+        )
 
 
 def build_service(
@@ -40,6 +64,7 @@ def build_service(
     completeness_policy: AcquisitionCompletenessPolicy = (
         AcquisitionCompletenessPolicy.ALLOW_BOUNDED_PARTIAL
     ),
+    artifact_store: ArtifactStore | None = None,
 ) -> tuple[AcquisitionService, list[httpx.Request]]:
     requests: list[httpx.Request] = []
     content = page_content or FIXTURE.read_bytes()
@@ -77,7 +102,7 @@ def build_service(
             )
         ),
         repository=repository,
-        artifact_store=FileArtifactStore(tmp_path),
+        artifact_store=artifact_store or FileArtifactStore(tmp_path),
         http_client=client,
         clock=lambda: datetime(2026, 8, 13, 12, tzinfo=UTC),
         sleeper=(sleeps.append if sleeps is not None else lambda _seconds: None),
@@ -243,7 +268,7 @@ def test_short_page_is_reported_as_partial_instead_of_success(tmp_path: Path) ->
     assert run.records_fetched == 1
 
 
-def test_schema_drift_preserves_raw_artifact_and_records_failed_run(tmp_path: Path) -> None:
+def test_schema_drift_is_rejected_before_artifact_persistence(tmp_path: Path) -> None:
     invalid = (
         FIXTURE.read_text()
         .replace(
@@ -259,8 +284,37 @@ def test_schema_drift_preserves_raw_artifact_and_records_failed_run(tmp_path: Pa
 
     assert run.status is SourceRunStatus.FAILED
     assert run.error_code == "SourceSchemaError"
-    assert len(repository.artifacts) == 1
+    assert not repository.artifacts
+    assert not list(tmp_path.rglob("*.json"))
     assert not repository.observations
+
+
+def test_unapproved_owner_attribute_is_rejected_before_artifact_persistence(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads(FIXTURE.read_text())
+    payload["fields"].append({"name": "py_owner_name", "type": "esriFieldTypeString"})
+    payload["features"][0]["attributes"]["py_owner_name"] = "PROHIBITED OWNER VALUE"
+    repository = MemoryAcquisitionRepository()
+    artifact_store = CountingArtifactStore(FileArtifactStore(tmp_path))
+    service, _ = build_service(
+        tmp_path,
+        repository,
+        page_content=json.dumps(payload).encode(),
+        artifact_store=artifact_store,
+    )
+
+    run = execute(service)
+    serialized = run.model_dump_json().lower()
+
+    assert run.status is SourceRunStatus.FAILED
+    assert run.error_code == "SourceSchemaError"
+    assert run.artifact_ids == ()
+    assert artifact_store.write_count == 0
+    assert not repository.artifacts
+    assert not list(tmp_path.rglob("*.json"))
+    assert "py_owner_name" not in serialized
+    assert "prohibited owner value" not in serialized
 
 
 def test_external_acquisition_gate_prevents_network_or_storage(tmp_path: Path) -> None:
@@ -363,3 +417,32 @@ def test_invalid_count_response_records_failure(tmp_path: Path) -> None:
 
     assert run.status is SourceRunStatus.FAILED
     assert run.error_code == "SourceSchemaError"
+
+
+def test_database_failure_receipt_never_persists_geometry_parameters(tmp_path: Path) -> None:
+    coordinates = '{"type":"MultiPolygon","coordinates":[[[[1,2],[3,4]]]]}'
+
+    class FailingGeometryRepository(MemoryAcquisitionRepository):
+        def save_observations(self, observations):  # type: ignore[no-untyped-def]
+            del observations
+            raise sa.exc.StatementError(
+                "geometry insert failed",
+                "INSERT INTO geo.parcel_geometry (geometry) VALUES (:geometry_geojson)",
+                {"geometry_geojson": coordinates},
+                ValueError("invalid geometry"),
+            )
+
+    repository = FailingGeometryRepository()
+    service, _ = build_service(tmp_path, repository)
+
+    run = execute(service)
+    serialized = run.model_dump_json().lower()
+
+    assert run.status is SourceRunStatus.FAILED
+    assert run.error_code == "StatementError"
+    assert run.error_detail == (
+        "Database persistence rejected the acquisition record; statement parameters were withheld."
+    )
+    assert "coordinates" not in serialized
+    assert "geometry_geojson" not in serialized
+    assert coordinates.lower() not in serialized

@@ -1,10 +1,12 @@
 """Immutable acquisition, provenance, and observation contracts."""
 
+import json
 from datetime import datetime
 from enum import StrEnum
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class AuthorityLevel(StrEnum):
@@ -138,8 +140,32 @@ class NormalizedParcelObservation(BaseModel):
     improvement_value_cents: int | None = Field(default=None, ge=0)
     land_value_cents: int | None = Field(default=None, ge=0)
     first_improvement_year: int | None = Field(default=None, ge=1700, le=2100)
+    geometry_srid: Literal[4326] | None = None
+    geometry_geojson: str | None = None
     observed_at: datetime
     screening_only: bool = True
+
+    @model_validator(mode="after")
+    def require_complete_geometry_pair(self) -> "NormalizedParcelObservation":
+        if (self.geometry_srid is None) != (self.geometry_geojson is None):
+            raise ValueError("parcel geometry SRID and GeoJSON must be provided together")
+        return self
+
+    @field_validator("geometry_geojson")
+    @classmethod
+    def require_multipolygon_geojson(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            geometry: Any = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError("parcel geometry must be valid GeoJSON") from error
+        if not isinstance(geometry, dict) or geometry.get("type") != "MultiPolygon":
+            raise ValueError("parcel geometry must be a GeoJSON MultiPolygon")
+        coordinates = geometry.get("coordinates")
+        if not isinstance(coordinates, list) or not coordinates:
+            raise ValueError("parcel geometry must contain polygon coordinates")
+        return value
 
 
 class QuarantinedRecord(BaseModel):

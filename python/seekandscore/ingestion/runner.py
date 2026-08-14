@@ -35,7 +35,11 @@ def build_acquisition_service(settings: Settings) -> AcquisitionService:
         ),
     )
     adapter = TravisTcadArcGisAdapter(query)
-    engine = sa.create_engine(settings.database_url, pool_pre_ping=True)
+    engine = sa.create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        hide_parameters=True,
+    )
     repository = PostgresAcquisitionRepository(engine)
 
     s3_values = (

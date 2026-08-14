@@ -37,7 +37,18 @@ const savedCase: ApiResearchCase = {
 
 function readyState(researchCase: ApiResearchCase | null = savedCase): DossierLoadState {
   const dossier = {
-    candidate: { id: candidateId },
+    candidate: {
+      id: candidateId,
+      opportunity_zone_status: "review",
+      opportunity_zone_evidence: {
+        classification: "unavailable",
+        reason_code: "display_not_approved",
+        method: null,
+        classified_at: null,
+        parcel_geometry: null,
+        designation: null,
+      },
+    },
     region_id: "us-tx-central-texas",
     gates: [
       {

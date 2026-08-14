@@ -5,6 +5,9 @@ from seekandscore.acquisition.models import AuthorityLevel, SourceDescriptor
 CDFI_QOZ_2018_SOURCE_ID = "federal_qoz_2018_designations"
 CDFI_QOZ_2018_ROUND_ID = "us-federal-qoz-2018"
 CDFI_QOZ_2018_ACTIVATION_ID = "SRC-CDFI-QOZ-2018-IMPORT-20260813-V1"
+CDFI_QOZ_2018_PRIVATE_DISPLAY_APPROVAL_ID = (
+    "SRC-CDFI-QOZ-2018-PRIVATE-REFERENCE-DISPLAY-20260814-V1"
+)
 CDFI_QOZ_2018_ARCHIVE_URL = (
     "https://www.cdfifund.gov/system/files/documents/opportunity-zones%3D8764.-9-10-2019.zip"
 )
@@ -42,7 +45,9 @@ CDFI_QOZ_2018_SOURCE = SourceDescriptor(
     adapter_version=CDFI_QOZ_2018_ADAPTER_VERSION,
     parser_version=CDFI_QOZ_2018_PARSER_VERSION,
     contains_personal_data=False,
-    display_allowed=False,
+    # Only coordinate-free derived membership evidence is displayable, behind an independent
+    # authenticated-private runtime gate. Geometry export remains prohibited.
+    display_allowed=True,
     export_allowed=False,
     redistribution_allowed=False,
 )
