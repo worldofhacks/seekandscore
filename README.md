@@ -2,7 +2,7 @@
 
 Seek and Score is a planning-first, explainable property-intelligence platform for discovering, underwriting, and ranking real-estate investment opportunities. Central Texas is the launch market; the architecture is intentionally designed to add county-by-county data adapters and Opportunity Zone cohorts across the United States without forking the core product.
 
-> Status: live-only property screening foundation. The deployed runtime never serves synthetic candidates or substitutes fixtures when a source fails. The first bounded Travis County parcel feed supports attributed reference display of reviewed non-owner fields; export, redistribution, owner/contact use, automated outreach, and production investment recommendations remain disabled.
+> Status: live-only property research platform. The deployed runtime never serves synthetic candidates or substitutes fixtures when a source fails. The first bounded Travis County parcel feed supports attributed reference display of reviewed non-owner fields. Full-cohort exploration and durable research dossiers are implemented; export, redistribution, owner/contact use, automated outreach, and production investment recommendations remain disabled. The official nationwide 2018 Opportunity Zone geography importer is implemented but remains separately gated and default-off until its first private import is approved and run.
 
 ## North-star outcome
 
@@ -64,6 +64,8 @@ See [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.
 The foundation slice is intentionally useful without implying that assessor observations are investment recommendations:
 
 - a responsive Next.js operator console with a live parcel-screening queue, provenance, risks, filters, and candidate drill-down;
+- full-cohort server-side search, city and acreage filters, stable parcel identifiers, and snapshot-bound cursor pagination across the approved live cohort;
+- authenticated, organization-scoped saved-research dossiers with notes, next actions, optimistic concurrency, database-immutable revisions, and server-derived verification gates;
 - a FastAPI read API with health, version, capabilities, live candidate list, candidate detail, and source-status endpoints;
 - modular backend boundaries for platform, registry, identity, and engagement;
 - policy-gated outreach states where every outbound channel and send action fails closed;
@@ -71,9 +73,10 @@ The foundation slice is intentionally useful without implying that assessor obse
 - worker and scheduler entrypoints with inert defaults;
 - PostGIS, Redis, and private MinIO services for local development;
 - a bounded Travis County TNR/TCAD parcel adapter with immutable raw artifacts, replay-safe observations, freshness/provenance status, and an independent public-display gate;
+- a source-pinned federal 2018 Opportunity Zone importer that validates the official CDFI archive checksum, all 8,764 unique 2010-vintage tract GEOIDs, geometry validity/repair lineage, transactional PostGIS loading, and unchanged replay;
 - non-root production containers, continuous integration, configuration validation, and credential scanning.
 
-The web application requires the API and verified live observations. If either is unavailable, it shows an explicit zero-candidate error or waiting state; it never substitutes fixture records. See the [live ingestion runbook](docs/LIVE_INGESTION_RUNBOOK.md) for the reviewed cohort, activation gates, source limitations, and Railway proof procedure.
+The web application requires the API and verified live observations. If either is unavailable, it shows an explicit zero-candidate error or waiting state; it never substitutes fixture records. Saved research additionally requires private web authentication, a private API origin, and explicit organization/actor/runtime gates. See the [live ingestion runbook](docs/LIVE_INGESTION_RUNBOOK.md) for the reviewed cohort, activation gates, source limitations, and Railway proof procedure.
 
 ## Quick start
 
@@ -98,6 +101,7 @@ For local persistence services, use `make infra-up`. To build and run the comple
 ## Repository guide
 
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — phases, deliverables, acceptance criteria, dependencies, and risks
+- [Expansion capabilities](docs/EXPANSION_CAPABILITIES.md) — implemented reach, next capability slices, and national activation gates
 - [System architecture](docs/ARCHITECTURE.md) — bounded contexts, data flow, contracts, deployment units, and scale path
 - [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.md) — cohort-aware model and authoritative data hierarchy
 - [Railway deployment plan](docs/RAILWAY_DEPLOYMENT.md) — service topology, environments, migrations, backups, and production caveats
@@ -138,6 +142,8 @@ python/seekandscore/
   platform/             configuration and shared application primitives
   registry/             geography-neutral property registry contracts
   identity/             parties, roles, and identity evidence
+  geography/            versioned federal and local spatial layers
+  deal/                 saved research and acquisition workflow state
   engagement/           policy-gated contact and scheduling boundary
 infra/
   docker/               production container definitions

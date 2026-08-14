@@ -32,7 +32,7 @@ This is the Phase 0 control document, not permission to automate any source. A s
 | launch counties | sold comparables | licensed/public sources | manual/approved provider | blocked | Texas nondisclosure and licensing |
 | federal/local | parcel geometry | CAD/county/local GIS | official download/service | discovery | authority, vintage, completeness |
 | federal | flood | FEMA NFHL/Map Service Center | official bulk download/service | discovery | effective-layer update process and version tests |
-| federal | Opportunity Zones | IRS/Treasury/CDFI + vintage-correct Census geometry | official files | discovery | 2010 join implementation and 2027 final publication lifecycle |
+| federal | Opportunity Zones | IRS/Treasury/CDFI frozen 2018 national archive | official SHA-pinned ZIP import | implementation ready, default off | First import still requires the exact activation ID; parcel joins/display remain separate; 2027 eligibility is never treated as effective |
 | local | zoning/city/ETJ | municipal/county GIS/planning | later/where authoritative | discovery | semantics, completeness, updates |
 | local/state/federal | wildfire/wetlands/elevation | official agencies | later phase | discovery | layer selection and screening limits |
 | local | roads/access/utilities | transport/local utility/planning | evidence signals only | discovery | legal-access versus physical-road distinction |

@@ -25,7 +25,7 @@ const navItems: NavItem[] = [
   { label: "Research queue", href: "#candidate-queue", icon: <QueueIcon /> },
   { label: "Map", href: "#candidate-queue", icon: <MapIcon /> },
   { label: "Deals", href: "#candidate-queue", icon: <DealIcon /> },
-  { label: "Outreach", href: "#outreach-panel", icon: <LockIcon />, locked: true },
+  { label: "Contact prep", href: "#evidence-panel", icon: <LockIcon />, locked: true },
   { label: "Source health", href: "#source-health", icon: <PulseIcon /> },
 ];
 
@@ -44,11 +44,15 @@ export function AppShell({
   snapshot,
 }: PropsWithChildren<{ snapshot: TopQueueSnapshot }>) {
   const rightsDisabled = snapshot.provenance.status === "rights_disabled";
-  const hasLiveCandidates = snapshot.candidates.length > 0;
+  const hasLiveCohort =
+    (snapshot.provenance.status === "current" ||
+      snapshot.provenance.status === "stale" ||
+      snapshot.provenance.status === "partial") &&
+    snapshot.cohort.cohortTotal > 0;
   const liveStatusLabel = rightsDisabled
     ? "Display rights disabled"
-    : hasLiveCandidates
-      ? "Verified live data"
+    : hasLiveCohort
+      ? "Approved live cohort"
       : "No verified live data";
 
   return (
@@ -72,8 +76,8 @@ export function AppShell({
           <span>
             {rightsDisabled
               ? "Private source · display disabled"
-              : hasLiveCandidates
-                ? `${snapshot.candidates.length} publishable live record${snapshot.candidates.length === 1 ? "" : "s"}`
+              : hasLiveCohort
+                ? `${snapshot.cohort.cohortTotal.toLocaleString("en-US")} approved live record${snapshot.cohort.cohortTotal === 1 ? "" : "s"}`
                 : "Live candidate feed unavailable"}
           </span>
         </div>
@@ -100,20 +104,20 @@ export function AppShell({
         <div className="sidebar-footer">
           <div className="sidebar-footer__row">
             <span
-              className={`status-indicator${hasLiveCandidates ? "" : " status-indicator--inactive"}`}
+              className={`status-indicator${hasLiveCohort ? "" : " status-indicator--inactive"}`}
             />
             <span>{liveStatusLabel}</span>
           </div>
-          <Badge tone={hasLiveCandidates ? "accent" : "blocked"}>
+          <Badge tone={hasLiveCohort ? "accent" : "blocked"}>
             {rightsDisabled
               ? "Display disabled"
-              : hasLiveCandidates
+              : hasLiveCohort
                 ? "Live screening"
                 : "Live unavailable"}
           </Badge>
           <p>
-            {hasLiveCandidates
-              ? "Verified parcel screening only. Outbound outreach remains disabled."
+            {hasLiveCohort
+              ? "Approved live cohort screening only. Outbound outreach remains disabled."
               : "No property records are being displayed. Outbound outreach remains disabled."}
           </p>
         </div>

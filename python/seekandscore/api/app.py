@@ -5,8 +5,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import Response
 
 from seekandscore.api.routes.candidates import router as candidates_router
+from seekandscore.api.routes.research import router as research_router
 from seekandscore.api.routes.sources import router as sources_router
 from seekandscore.api.routes.system import router as system_router
 from seekandscore.bootstrap import AppContainer
@@ -37,7 +40,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.container = container
     application.include_router(system_router)
     application.include_router(candidates_router, prefix=f"/{API_VERSION}")
+    application.include_router(research_router, prefix=f"/{API_VERSION}")
     application.include_router(sources_router, prefix=f"/{API_VERSION}")
+
+    @application.middleware("http")
+    async def private_research_responses(
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        response = await call_next(request)
+        if _is_research_path(request.url.path):
+            response.headers["Cache-Control"] = "private, no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+        return response
 
     @application.exception_handler(HTTPException)
     async def http_problem(request: Request, error: HTTPException) -> JSONResponse:
@@ -58,11 +73,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return application
 
 
+def _is_research_path(path: str) -> bool:
+    return (
+        path == "/v1/research-cases"
+        or path.startswith("/v1/research-cases/")
+        or (
+            path.startswith("/v1/candidates/")
+            and (path.endswith("/dossier") or path.endswith("/research-case"))
+        )
+    )
+
+
 def _problem_title(status_code: int) -> str:
     return {
         400: "Bad Request",
+        401: "Unauthorized",
+        403: "Forbidden",
         404: "Not Found",
         409: "Conflict",
+        412: "Precondition Failed",
+        428: "Precondition Required",
         503: "Service Unavailable",
     }.get(status_code, "Request Error")
 

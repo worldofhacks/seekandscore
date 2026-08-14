@@ -14,6 +14,9 @@ target_metadata = None
 
 
 def database_url() -> str:
+    explicit_url = config.attributes.get("seekandscore_database_url")
+    if isinstance(explicit_url, str) and explicit_url:
+        return explicit_url
     return os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
 
 

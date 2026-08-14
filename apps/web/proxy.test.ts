@@ -93,7 +93,26 @@ describe("private access proxy", () => {
       expect(response.headers.get("x-middleware-override-headers")).not.toContain(
         "authorization",
       );
+      expect(response.headers.get("x-middleware-request-x-seekandscore-operator")).toBe(
+        "operator",
+      );
     }
+  });
+
+  it("replaces an untrusted inbound operator header with the authenticated identity", () => {
+    stagingCredentials();
+    const response = proxy(
+      new NextRequest("https://web.example.test/", {
+        headers: {
+          authorization: authorization("operator", "test-password-not-a-real-secret"),
+          "x-seekandscore-operator": "attacker",
+        },
+      }),
+    );
+
+    expect(response.headers.get("x-middleware-request-x-seekandscore-operator")).toBe(
+      "operator",
+    );
   });
 
   it("accepts the case-insensitive Basic scheme but rejects malformed tokens", () => {
@@ -123,5 +142,30 @@ describe("private access proxy", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("strips spoofed identity and refuses research without enforced private access", () => {
+    vi.stubEnv("APP_ENV", "development");
+    vi.stubEnv("WEB_PRIVATE_ACCESS_ENABLED", "false");
+    const spoofed = new NextRequest("http://localhost:3000/api/research/cases", {
+      headers: { "x-seekandscore-operator": "attacker" },
+    });
+
+    const readOnly = proxy(spoofed);
+    expect(readOnly.status).toBe(200);
+    expect(
+      readOnly.headers.get("x-middleware-request-x-seekandscore-operator"),
+    ).toBeNull();
+
+    vi.stubEnv("RESEARCH_WRITES_ENABLED", "true");
+    expect(proxy(spoofed).status).toBe(503);
+  });
+
+  it("never treats a production process as local development", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("APP_ENV", "development");
+    vi.stubEnv("WEB_PRIVATE_ACCESS_ENABLED", "false");
+
+    expect(proxy(new NextRequest("https://web.example.test/")).status).toBe(503);
   });
 });

@@ -67,7 +67,7 @@ function liveCandidate(): CandidateSummary {
 function snapshotWithLiveCandidate(): TopQueueSnapshot {
   return {
     id: "live-snapshot",
-    label: "Verified live candidates",
+    label: "Approved live cohort",
     region: "Central Texas",
     timeZone: "America/Chicago",
     asOf: "2026-08-13T10:30:00Z",
@@ -90,6 +90,17 @@ function snapshotWithLiveCandidate(): TopQueueSnapshot {
           recordCount: 1,
         },
       ],
+    },
+    cohort: {
+      cohortTotal: 953,
+      filteredTotal: 127,
+      nextCursor: "eyJvZmZzZXQiOjUwfQ",
+      appliedFilters: {
+        q: "FM 973",
+        city: "DEL VALLE",
+        minAcres: 2,
+        maxAcres: 20,
+      },
     },
     candidates: [liveCandidate()],
   };
@@ -118,6 +129,17 @@ function emptySnapshot(
       sources: [],
       warnings: [],
     },
+    cohort: {
+      cohortTotal: 0,
+      filteredTotal: 0,
+      nextCursor: null,
+      appliedFilters: {
+        q: null,
+        city: null,
+        minAcres: null,
+        maxAcres: null,
+      },
+    },
     candidates: [],
   };
 }
@@ -133,7 +155,46 @@ describe("strict live operator console", () => {
     expect(markup).toContain("Assessor observation · not an offer");
     expect(markup).toContain('aria-label="Screening score 67.4 out of 100"');
     expect(markup).toContain("Opportunity Zone status");
-    expect(markup).toContain("Outreach");
+    expect(markup).toContain("Research");
+    expect(markup).toContain("Contact prep");
+    expect(markup).toContain("Loading saved research");
+    expect(markup).toContain("Approved live cohort");
+    expect(markup).toContain("1 shown of filtered 127 / cohort 953");
+    expect(markup).toContain('aria-label="Filter approved live cohort"');
+    expect(markup).toContain('name="q"');
+    expect(markup).toContain('name="city"');
+    expect(markup).toContain('name="min_acres"');
+    expect(markup).toContain('name="max_acres"');
+    expect(markup).toContain('aria-label="Candidate cohort pages"');
+    expect(markup).toContain("Next page");
+    expect(markup).not.toContain("Export");
+  });
+
+  it("keeps a valid zero-result search inside the approved cohort explorer", () => {
+    const snapshot: TopQueueSnapshot = {
+      ...snapshotWithLiveCandidate(),
+      candidates: [],
+      cohort: {
+        cohortTotal: 953,
+        filteredTotal: 0,
+        nextCursor: null,
+        appliedFilters: {
+          q: "no matching parcel",
+          city: "MANOR",
+          minAcres: null,
+          maxAcres: null,
+        },
+      },
+    };
+    const markup = renderToStaticMarkup(<OperatorConsole snapshot={snapshot} />);
+
+    expect(markup).toContain("Source-backed parcels for research");
+    expect(markup).toContain("No parcels match these cohort filters");
+    expect(markup).toContain("0 shown of filtered 0 / cohort 953");
+    expect(markup).toContain('value="no matching parcel"');
+    expect(markup).toContain("Clear filters");
+    expect(markup).toContain("End of filtered cohort");
+    expect(markup).not.toContain("Live candidate data could not be loaded");
   });
 
   it("renders an explicit zero-record error state when live data is unavailable", () => {
@@ -164,6 +225,19 @@ describe("strict live operator console", () => {
     expect(markup).toContain("Published candidates");
     expect(markup).toContain(">0<");
     expect(markup).not.toContain("East Austin assessor parcel");
+    expect(markup).not.toContain("953 approved live records");
     expect(markup).toContain("No property records are being displayed");
+  });
+
+  it("uses the full cohort total in the shell instead of the current page length", () => {
+    const snapshot = snapshotWithLiveCandidate();
+    const markup = renderToStaticMarkup(
+      <AppShell snapshot={snapshot}>
+        <OperatorConsole snapshot={snapshot} />
+      </AppShell>,
+    );
+
+    expect(markup).toContain("953 approved live records");
+    expect(markup).not.toContain("1 publishable live record");
   });
 });

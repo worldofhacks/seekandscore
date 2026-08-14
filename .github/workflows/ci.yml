@@ -77,8 +77,12 @@ jobs:
       - run: uv run mypy python services
       - run: env -u DATABASE_URL uv run pytest tests/backend
       - run: uv run python -m seekandscore.db.migrate upgrade
-      - name: Postgres repository integration
-        run: SEEKANDSCORE_TEST_DATABASE_URL="$DATABASE_URL" env -u DATABASE_URL uv run pytest tests/backend/test_postgres_repository_integration.py
+      - name: PostGIS repository integration
+        run: >-
+          SEEKANDSCORE_TEST_DATABASE_URL="$DATABASE_URL" env -u DATABASE_URL uv run pytest
+          tests/backend/test_postgres_repository_integration.py
+          tests/backend/test_database_roles_integration.py
+          tests/backend/test_opportunity_zones.py
 
   web:
     name: Web quality gates
@@ -107,6 +111,8 @@ jobs:
             dockerfile: infra/docker/api.Dockerfile
           - name: worker
             dockerfile: infra/docker/worker.Dockerfile
+          - name: db-migrate
+            dockerfile: infra/docker/db-migrate.Dockerfile
           - name: web
             dockerfile: infra/docker/web.Dockerfile
     steps:

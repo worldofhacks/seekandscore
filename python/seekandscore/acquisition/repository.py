@@ -20,7 +20,12 @@ from seekandscore.acquisition.models import (
 class AcquisitionRepository(Protocol):
     def is_ready(self) -> bool: ...
 
-    def latest_run(self, source_id: str) -> SourceRun | None: ...
+    def latest_run(
+        self,
+        source_id: str,
+        *,
+        run_profile: SourceRunProfile | None = None,
+    ) -> SourceRun | None: ...
 
     def latest_complete_run(
         self, source_id: str, *, run_profile: SourceRunProfile
@@ -45,6 +50,9 @@ class AcquisitionRepository(Protocol):
         offset: int = 0,
         artifact_ids: tuple[UUID, ...] | None = None,
         cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
     ) -> tuple[NormalizedParcelObservation, ...]: ...
 
     def count_latest_observations(
@@ -52,6 +60,9 @@ class AcquisitionRepository(Protocol):
         *,
         artifact_ids: tuple[UUID, ...] | None = None,
         cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
     ) -> int: ...
 
 
@@ -65,8 +76,18 @@ class MemoryAcquisitionRepository:
     def is_ready(self) -> bool:
         return True
 
-    def latest_run(self, source_id: str) -> SourceRun | None:
-        matches = [run for run in self.runs.values() if run.source_id == source_id]
+    def latest_run(
+        self,
+        source_id: str,
+        *,
+        run_profile: SourceRunProfile | None = None,
+    ) -> SourceRun | None:
+        matches = [
+            run
+            for run in self.runs.values()
+            if run.source_id == source_id
+            and (run_profile is None or run.run_profile is run_profile)
+        ]
         return max(matches, key=lambda run: (run.started_at, str(run.id))) if matches else None
 
     def latest_complete_run(
@@ -130,20 +151,37 @@ class MemoryAcquisitionRepository:
         offset: int = 0,
         artifact_ids: tuple[UUID, ...] | None = None,
         cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
     ) -> tuple[NormalizedParcelObservation, ...]:
         selected_artifacts = frozenset(artifact_ids) if artifact_ids is not None else None
         selected_cities = frozenset(cities) if cities is not None else None
         latest_by_parcel: dict[str, NormalizedParcelObservation] = {}
         for item in self.observations.values():
+            if item.source_id != "travis_tcad_parcels":
+                continue
             if selected_artifacts is not None and item.artifact_id not in selected_artifacts:
                 continue
-            if selected_cities is not None and item.situs_city not in selected_cities:
-                continue
             current = latest_by_parcel.get(item.local_parcel_id)
-            if current is None or item.observed_at > current.observed_at:
+            if current is None or (item.observed_at, str(item.id)) > (
+                current.observed_at,
+                str(current.id),
+            ):
                 latest_by_parcel[item.local_parcel_id] = item
+        filtered = (
+            item
+            for item in latest_by_parcel.values()
+            if _observation_matches(
+                item,
+                selected_cities=selected_cities,
+                search_query=search_query,
+                min_acres=min_acres,
+                max_acres=max_acres,
+            )
+        )
         ordered = sorted(
-            latest_by_parcel.values(),
+            filtered,
             key=lambda item: (
                 -(item.tcad_acres or item.gis_acres or 0),
                 item.local_parcel_id,
@@ -156,17 +194,45 @@ class MemoryAcquisitionRepository:
         *,
         artifact_ids: tuple[UUID, ...] | None = None,
         cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
     ) -> int:
-        selected_artifacts = frozenset(artifact_ids) if artifact_ids is not None else None
-        selected_cities = frozenset(cities) if cities is not None else None
         return len(
-            {
-                item.local_parcel_id
-                for item in self.observations.values()
-                if (selected_artifacts is None or item.artifact_id in selected_artifacts)
-                and (selected_cities is None or item.situs_city in selected_cities)
-            }
+            self.list_latest_observations(
+                limit=len(self.observations),
+                artifact_ids=artifact_ids,
+                cities=cities,
+                search_query=search_query,
+                min_acres=min_acres,
+                max_acres=max_acres,
+            )
         )
+
+
+def _observation_matches(
+    item: NormalizedParcelObservation,
+    *,
+    selected_cities: frozenset[str] | None,
+    search_query: str | None,
+    min_acres: float | None,
+    max_acres: float | None,
+) -> bool:
+    if selected_cities is not None and item.situs_city not in selected_cities:
+        return False
+    if search_query:
+        needle = search_query.casefold()
+        approved_search_fields = (
+            item.situs_address,
+            item.local_parcel_id,
+            item.situs_city,
+        )
+        if not any(needle in (value or "").casefold() for value in approved_search_fields):
+            return False
+    acreage = item.tcad_acres if item.tcad_acres is not None else item.gis_acres
+    if min_acres is not None and (acreage is None or acreage < min_acres):
+        return False
+    return not (max_acres is not None and (acreage is None or acreage > max_acres))
 
 
 metadata = sa.MetaData()
@@ -231,13 +297,22 @@ class PostgresAcquisitionRepository:
             return False
         return True
 
-    def latest_run(self, source_id: str) -> SourceRun | None:
-        statement = (
-            sa.select(source_run_table.c.payload)
-            .where(source_run_table.c.source_id == source_id)
-            .order_by(source_run_table.c.started_at.desc(), source_run_table.c.id.desc())
-            .limit(1)
+    def latest_run(
+        self,
+        source_id: str,
+        *,
+        run_profile: SourceRunProfile | None = None,
+    ) -> SourceRun | None:
+        statement = sa.select(source_run_table.c.payload).where(
+            source_run_table.c.source_id == source_id
         )
+        if run_profile is not None:
+            statement = statement.where(
+                source_run_table.c.payload["run_profile"].as_string() == run_profile.value
+            )
+        statement = statement.order_by(
+            source_run_table.c.started_at.desc(), source_run_table.c.id.desc()
+        ).limit(1)
         with self.engine.connect() as connection:
             payload = connection.scalar(statement)
         return SourceRun.model_validate(payload) if payload else None
@@ -366,36 +441,67 @@ class PostgresAcquisitionRepository:
         offset: int = 0,
         artifact_ids: tuple[UUID, ...] | None = None,
         cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
     ) -> tuple[NormalizedParcelObservation, ...]:
         if artifact_ids == ():
             return ()
-        filters = [observation_table.c.source_id == "travis_tcad_parcels"]
+        snapshot_filters = [observation_table.c.source_id == "travis_tcad_parcels"]
         if artifact_ids is not None:
-            filters.append(observation_table.c.artifact_id.in_(artifact_ids))
-        if cities is not None:
-            filters.append(observation_table.c.payload["situs_city"].as_string().in_(cities))
+            snapshot_filters.append(observation_table.c.artifact_id.in_(artifact_ids))
         ranked = (
             sa.select(
                 observation_table.c.payload,
+                observation_table.c.source_record_id,
                 sa.func.row_number()
                 .over(
                     partition_by=observation_table.c.source_record_id,
-                    order_by=sa.cast(
-                        observation_table.c.payload["observed_at"].as_string(),
-                        sa.DateTime(timezone=True),
-                    ).desc(),
+                    order_by=(
+                        sa.cast(
+                            observation_table.c.payload["observed_at"].as_string(),
+                            sa.DateTime(timezone=True),
+                        ).desc(),
+                        observation_table.c.id.desc(),
+                    ),
                 )
                 .label("version_rank"),
             )
-            .where(*filters)
+            .where(*snapshot_filters)
             .cte("ranked_observations")
         )
+        filters = [ranked.c.version_rank == 1]
+        payload = ranked.c.payload
+        if cities is not None:
+            filters.append(payload["situs_city"].as_string().in_(cities))
+        if search_query:
+            pattern = f"%{_escape_like(search_query)}%"
+            filters.append(
+                sa.or_(
+                    sa.func.coalesce(payload["situs_address"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                    sa.func.coalesce(payload["local_parcel_id"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                    sa.func.coalesce(payload["situs_city"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                )
+            )
+        acreage = sa.func.coalesce(
+            payload["tcad_acres"].as_float(), payload["gis_acres"].as_float()
+        )
+        if min_acres is not None:
+            filters.append(acreage >= min_acres)
+        if max_acres is not None:
+            filters.append(acreage <= max_acres)
         statement = (
             sa.select(ranked.c.payload)
-            .where(ranked.c.version_rank == 1)
+            .where(*filters)
             .order_by(
-                ranked.c.payload["tcad_acres"].as_float().desc().nullslast(),
-                ranked.c.payload["local_parcel_id"].as_string(),
+                acreage.desc().nullslast(),
+                payload["local_parcel_id"].as_string(),
             )
             .limit(limit)
             .offset(offset)
@@ -409,17 +515,65 @@ class PostgresAcquisitionRepository:
         *,
         artifact_ids: tuple[UUID, ...] | None = None,
         cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
     ) -> int:
         if artifact_ids == ():
             return 0
-        statement = sa.select(
-            sa.func.count(sa.distinct(observation_table.c.source_record_id))
-        ).where(observation_table.c.source_id == "travis_tcad_parcels")
+        snapshot_filters = [observation_table.c.source_id == "travis_tcad_parcels"]
         if artifact_ids is not None:
-            statement = statement.where(observation_table.c.artifact_id.in_(artifact_ids))
-        if cities is not None:
-            statement = statement.where(
-                observation_table.c.payload["situs_city"].as_string().in_(cities)
+            snapshot_filters.append(observation_table.c.artifact_id.in_(artifact_ids))
+        ranked = (
+            sa.select(
+                observation_table.c.payload,
+                observation_table.c.source_record_id,
+                sa.func.row_number()
+                .over(
+                    partition_by=observation_table.c.source_record_id,
+                    order_by=(
+                        sa.cast(
+                            observation_table.c.payload["observed_at"].as_string(),
+                            sa.DateTime(timezone=True),
+                        ).desc(),
+                        observation_table.c.id.desc(),
+                    ),
+                )
+                .label("version_rank"),
             )
+            .where(*snapshot_filters)
+            .cte("ranked_observations")
+        )
+        filters = [ranked.c.version_rank == 1]
+        payload = ranked.c.payload
+        if cities is not None:
+            filters.append(payload["situs_city"].as_string().in_(cities))
+        if search_query:
+            pattern = f"%{_escape_like(search_query)}%"
+            filters.append(
+                sa.or_(
+                    sa.func.coalesce(payload["situs_address"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                    sa.func.coalesce(payload["local_parcel_id"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                    sa.func.coalesce(payload["situs_city"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                )
+            )
+        acreage = sa.func.coalesce(
+            payload["tcad_acres"].as_float(), payload["gis_acres"].as_float()
+        )
+        if min_acres is not None:
+            filters.append(acreage >= min_acres)
+        if max_acres is not None:
+            filters.append(acreage <= max_acres)
+        statement = sa.select(sa.func.count()).select_from(ranked).where(*filters)
         with self.engine.connect() as connection:
             return int(connection.scalar(statement) or 0)
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

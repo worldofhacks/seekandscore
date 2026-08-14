@@ -40,29 +40,62 @@ def require_safe_runtime_defaults() -> list[str]:
     for name, value in expected.items():
         if f"${{{name}:={value}}}" not in entrypoint:
             failures.append(f"python entrypoint must default {name}={value}")
+    if "MIGRATION_DATABASE_URL belongs only on db-migrate" not in entrypoint:
+        failures.append("deployed Python runtime must reject the migration owner credential")
+    if "deployed Python services require a database role audit" not in entrypoint:
+        failures.append("deployed Python runtime must require a database role audit wrapper")
+
+    role_entrypoint = (ROOT / "scripts/runtime/database-role-entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    for marker in (
+        "audit-api-runtime",
+        "audit-ingestion-runtime",
+        "owner credential must not be present at runtime",
+    ):
+        if marker not in role_entrypoint:
+            failures.append(f"database role entrypoint is missing safety marker: {marker}")
 
     web_entrypoint = (ROOT / "scripts/runtime/web-entrypoint.sh").read_text(encoding="utf-8")
-    if '${DATASET_MODE:=live}' not in web_entrypoint:
+    if "${DATASET_MODE:=live}" not in web_entrypoint:
         failures.append("web entrypoint must default DATASET_MODE=live")
     if 'if [ "$DATASET_MODE" != "live" ]' not in web_entrypoint:
         failures.append("web entrypoint must reject non-live dataset modes")
-    if 'API_BASE_URL is required in $APP_ENV' not in web_entrypoint:
+    if "API_BASE_URL is required in $APP_ENV" not in web_entrypoint:
         failures.append("web staging/production runtime must require API_BASE_URL")
     if "web startup refused: unsupported APP_ENV" not in web_entrypoint:
         failures.append("web runtime must reject unknown application environments")
-    if 'WEB_PRIVATE_ACCESS_ENABLED must be true in $APP_ENV' not in web_entrypoint:
+    if "WEB_PRIVATE_ACCESS_ENABLED must be true in $APP_ENV" not in web_entrypoint:
         failures.append("web staging/production runtime must require private access")
     for name in ("WEB_PRIVATE_ACCESS_USERNAME", "WEB_PRIVATE_ACCESS_PASSWORD"):
         if f"{name} is required in $APP_ENV" not in web_entrypoint:
             failures.append(f"web staging/production runtime must require {name}")
     if "WEB_PRIVATE_ACCESS_PASSWORD must be at least 24 characters" not in web_entrypoint:
         failures.append("web staging/production runtime must enforce private password length")
+    if "research writes require the exact private Railway API origin" not in web_entrypoint:
+        failures.append("web research writes must require the exact private API origin")
+    if "saved research is disabled in development and test runtimes" not in web_entrypoint:
+        failures.append("web research writes must fail closed in development/test runtimes")
 
     web_proxy = (ROOT / "apps/web/proxy.ts").read_text(encoding="utf-8")
     if 'const HEALTH_PATH = "/api/health"' not in web_proxy:
         failures.append("web private-access proxy must preserve only /api/health")
     if 'matcher: "/:path*"' not in web_proxy:
         failures.append("web private-access proxy must cover every application path")
+    if "requestHeaders.delete(OPERATOR_HEADER)" not in web_proxy:
+        failures.append("web proxy must remove caller-supplied operator identity")
+
+    research_proxy = (ROOT / "apps/web/lib/research-proxy.ts").read_text(encoding="utf-8")
+    for marker, description in (
+        ('import "server-only"', "research proxy must be server-only"),
+        ('redirect: "error"', "research proxy must reject redirects"),
+        (
+            '"http://api.railway.internal:8000"',
+            "research proxy must pin the private Railway API origin",
+        ),
+    ):
+        if marker not in research_proxy:
+            failures.append(description)
 
     web_dockerfile = (ROOT / "infra/docker/web.Dockerfile").read_text(encoding="utf-8")
     if "APP_ENV=production" not in web_dockerfile:
@@ -71,13 +104,17 @@ def require_safe_runtime_defaults() -> list[str]:
         failures.append("web production image must set DATASET_MODE=live")
 
     for image_name in ("api", "worker"):
-        dockerfile = (ROOT / f"infra/docker/{image_name}.Dockerfile").read_text(
-            encoding="utf-8"
-        )
+        dockerfile = (ROOT / f"infra/docker/{image_name}.Dockerfile").read_text(encoding="utf-8")
         if "APP_ENV=production" not in dockerfile:
             failures.append(f"{image_name} production image must set APP_ENV=production")
         if "DATASET_MODE=live" not in dockerfile:
             failures.append(f"{image_name} production image must set DATASET_MODE=live")
+    api_dockerfile = (ROOT / "infra/docker/api.Dockerfile").read_text(encoding="utf-8")
+    if 'database-role-entrypoint.sh", "api"' not in api_dockerfile:
+        failures.append("API image default command must audit the API database role")
+    worker_dockerfile = (ROOT / "infra/docker/worker.Dockerfile").read_text(encoding="utf-8")
+    if 'database-role-entrypoint.sh", "unprovisioned"' not in worker_dockerfile:
+        failures.append("worker default command must refuse an unprovisioned database role")
 
     compose = parse_yaml(ROOT / "compose.yaml")
     runtime = compose.get("x-safe-runtime", {}) if isinstance(compose, dict) else {}
@@ -91,7 +128,11 @@ def require_safe_railway_commands() -> list[str]:
     """Ensure Railway cannot bypass fail-closed Python runtime defaults."""
 
     failures: list[str] = []
-    safe_entrypoint = "/app/scripts/runtime/python-entrypoint.sh"
+    safe_entrypoints = (
+        "/app/scripts/runtime/python-entrypoint.sh",
+        "/app/scripts/runtime/database-role-entrypoint.sh",
+        "/app/scripts/runtime/db-migrate-entrypoint.sh",
+    )
     for path in sorted((ROOT / "infra/railway").glob("*.toml")):
         config = parse_toml(path)
         deploy = config.get("deploy", {}) if isinstance(config, dict) else {}
@@ -99,10 +140,57 @@ def require_safe_railway_commands() -> list[str]:
         if (
             isinstance(command, str)
             and "python -m seekandscore" in command
-            and not command.startswith(f"{safe_entrypoint} ")
+            and not command.startswith(tuple(f"{entrypoint} " for entrypoint in safe_entrypoints))
         ):
             failures.append(
-                f"{path.relative_to(ROOT)}: Python startCommand must invoke {safe_entrypoint}"
+                f"{path.relative_to(ROOT)}: Python startCommand must invoke a safe entrypoint"
+            )
+    return failures
+
+
+def require_database_role_isolation() -> list[str]:
+    """Keep owner credentials on one one-shot service and audit every deployed DB runtime."""
+
+    failures: list[str] = []
+    railway = ROOT / "infra/railway"
+    expected_start_fragments = {
+        "api.example.toml": "database-role-entrypoint.sh api ",
+        "ingestion-travis.example.toml": "database-role-entrypoint.sh ingestion ",
+        "ingestion-travis.cron.example.toml": "database-role-entrypoint.sh ingestion ",
+        "worker-discovery.example.toml": "database-role-entrypoint.sh ingestion ",
+        "worker-enrichment.example.toml": "database-role-entrypoint.sh unprovisioned ",
+        "worker-engagement.example.toml": "database-role-entrypoint.sh unprovisioned ",
+        "scheduler.example.toml": "database-role-entrypoint.sh unprovisioned ",
+    }
+    for filename, marker in expected_start_fragments.items():
+        deploy = parse_toml(railway / filename).get("deploy", {})
+        command = deploy.get("startCommand", "") if isinstance(deploy, dict) else ""
+        if marker not in command:
+            failures.append(f"infra/railway/{filename}: missing database role contract {marker}")
+        if isinstance(deploy, dict) and "preDeployCommand" in deploy:
+            failures.append(f"infra/railway/{filename}: runtime service must not own migrations")
+
+    migration_path = railway / "db-migrate.example.toml"
+    migration_deploy = parse_toml(migration_path).get("deploy", {})
+    if not isinstance(migration_deploy, dict):
+        failures.append("infra/railway/db-migrate.example.toml: deploy config is required")
+        return failures
+    if migration_deploy.get("preDeployCommand") != (
+        "/app/scripts/runtime/db-migrate-entrypoint.sh python -m seekandscore.db.release apply"
+    ):
+        failures.append("db-migrate must exclusively apply migrations and provision runtime roles")
+    if migration_deploy.get("startCommand") != (
+        "/app/scripts/runtime/db-migrate-entrypoint.sh python -m seekandscore.db.release verify"
+    ):
+        failures.append("db-migrate start must verify schema and both runtime roles")
+
+    for path in sorted(railway.glob("*.toml")):
+        if path == migration_path:
+            continue
+        content = path.read_text(encoding="utf-8")
+        if "seekandscore.db.migrate" in content or "MIGRATION_DATABASE_URL" in content:
+            failures.append(
+                f"{path.relative_to(ROOT)}: owner migration capability belongs only on db-migrate"
             )
     return failures
 
@@ -120,7 +208,7 @@ def require_live_only_runtime_tree() -> list[str]:
         "SyntheticCandidateRepository": "fixture-backed candidate repository",
         'dataset_status="fallback"': "fallback candidate status",
         'dataset_status="synthetic"': "non-live candidate status",
-        'DatasetMode.SYNTHETIC': "non-live dataset mode",
+        "DatasetMode.SYNTHETIC": "non-live dataset mode",
         "synthetic-candidate-v1": "fixture read-model version",
     }
     suffixes = {".py", ".ts", ".tsx"}
@@ -135,7 +223,9 @@ def require_live_only_runtime_tree() -> list[str]:
                 if marker in content:
                     failures.append(f"{path.relative_to(ROOT)}: contains forbidden {label}")
     if (ROOT / "apps/web/lib/candidates.ts").exists():
-        failures.append("apps/web/lib/candidates.ts: deployed candidate fixture module must not exist")
+        failures.append(
+            "apps/web/lib/candidates.ts: deployed candidate fixture module must not exist"
+        )
     return failures
 
 
@@ -203,6 +293,7 @@ def main() -> int:
     try:
         failures.extend(require_safe_runtime_defaults())
         failures.extend(require_safe_railway_commands())
+        failures.extend(require_database_role_isolation())
         failures.extend(require_live_only_runtime_tree())
         failures.extend(require_safe_ingestion_profiles())
     except Exception as exc:

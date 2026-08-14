@@ -1,0 +1,26 @@
+schema_version: 1
+source:
+  id: federal_qoz_2027_eligible_tracts
+  authority: U.S. Department of the Treasury
+  authority_level: official_derivative
+  jurisdiction: US
+  capability: opportunity_zone_candidate
+  status: reference_only_no_import_adapter
+  contains_personal_data: false
+
+official_artifact:
+  landing_page: https://home.treasury.gov/policy-issues/tax-policy/data-transparency/qualified-opportunity-zones
+  eligibility_workbook_url: https://home.treasury.gov/system/files/131/OZ2-Eligible-LIC-Tracts-Data-Transparency-03232026.xlsx
+  methodology_url: https://home.treasury.gov/system/files/131/OZ2-Eligibility-Criteria-Data-Transparency-03232026.pdf
+
+semantic_contract:
+  round_code: "2027"
+  only_permitted_status: eligible
+  prohibited_statuses: [state_nominated, treasury_certified, effective]
+  reason: Eligibility for nomination is not nomination, Treasury certification, or an effective QOZ.
+  promotion_requires_new_official_artifact_and_reviewed_adapter: true
+
+runtime:
+  default_enabled: false
+  adapter: null
+  scheduled_refresh: none

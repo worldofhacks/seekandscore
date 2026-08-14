@@ -1,12 +1,20 @@
 import type {
   ApiCandidatePage,
   ApiCandidateReadModel,
+  CandidateAppliedFilters,
   CandidateStrategy,
   CandidateSummary,
   DatasetHealthStatus,
   EvidenceDatum,
   TopQueueSnapshot,
 } from "@seekandscore/contracts";
+
+import {
+  buildCandidateApiQuery,
+  candidateFiltersFromQuery,
+  parseCandidateQuery,
+  type CandidateQuery,
+} from "@/lib/candidate-query";
 
 const STRATEGIES: Record<string, CandidateStrategy> = {
   assemblage: "Land banking",
@@ -55,11 +63,53 @@ function sourceProvenance(page: ApiCandidatePage) {
 function isCandidatePage(value: unknown): value is ApiCandidatePage {
   if (!value || typeof value !== "object") return false;
   const page = value as Partial<ApiCandidatePage>;
+  const applied = page.applied_filters;
+  const nullableString = (candidate: unknown) =>
+    candidate === null || typeof candidate === "string";
+  const nullableNonNegativeNumber = (candidate: unknown) =>
+    candidate === null ||
+    (typeof candidate === "number" &&
+      Number.isFinite(candidate) &&
+      candidate >= 0);
+  const validCity =
+    applied?.city === null ||
+    applied?.city === "DEL VALLE" ||
+    applied?.city === "MANOR";
+  const validRange =
+    applied?.min_acres === null ||
+    applied?.max_acres === null ||
+    (typeof applied?.min_acres === "number" &&
+      typeof applied?.max_acres === "number" &&
+      applied.min_acres <= applied.max_acres);
   return (
     Array.isArray(page.items) &&
     typeof page.dataset_mode === "string" &&
-    typeof page.read_model_version === "string"
+    typeof page.read_model_version === "string" &&
+    Number.isInteger(page.total) &&
+    Number.isInteger(page.cohort_total) &&
+    (page.total ?? -1) >= 0 &&
+    (page.cohort_total ?? -1) >= 0 &&
+    (page.total ?? 0) <= (page.cohort_total ?? -1) &&
+    page.items.length <= (page.total ?? -1) &&
+    Boolean(applied) &&
+    typeof applied === "object" &&
+    nullableString(applied?.q) &&
+    (applied?.q?.length ?? 0) <= 100 &&
+    validCity &&
+    nullableNonNegativeNumber(applied?.min_acres) &&
+    nullableNonNegativeNumber(applied?.max_acres) &&
+    validRange &&
+    (page.next_cursor === null || typeof page.next_cursor === "string")
   );
+}
+
+function appliedFilters(page: ApiCandidatePage): CandidateAppliedFilters {
+  return {
+    q: page.applied_filters.q,
+    city: page.applied_filters.city,
+    minAcres: page.applied_filters.min_acres,
+    maxAcres: page.applied_filters.max_acres,
+  };
 }
 
 function emptyLiveSnapshot(
@@ -67,6 +117,7 @@ function emptyLiveSnapshot(
   status: Extract<DatasetHealthStatus, "error" | "rights_disabled" | "unavailable">,
   page?: ApiCandidatePage,
   preserveLiveProvenance = false,
+  query?: CandidateQuery,
 ): TopQueueSnapshot {
   const isLiveResponse = page?.dataset_mode === "live";
   const livePage = isLiveResponse ? page : undefined;
@@ -92,6 +143,15 @@ function emptyLiveSnapshot(
         preserveLiveProvenance && livePage && status !== "unavailable"
           ? (livePage.warnings ?? []).filter((warning) => warning !== reason)
           : [],
+    },
+    cohort: {
+      cohortTotal: 0,
+      filteredTotal: 0,
+      nextCursor: null,
+      appliedFilters:
+        isLiveResponse && livePage
+          ? appliedFilters(livePage)
+          : candidateFiltersFromQuery(query),
     },
     candidates: [],
   };
@@ -261,12 +321,17 @@ function mapCandidate(candidate: ApiCandidateReadModel): CandidateSummary {
   return summary;
 }
 
-export function mapApiCandidatePage(page: ApiCandidatePage): TopQueueSnapshot {
+export function mapApiCandidatePage(
+  page: ApiCandidatePage,
+  query: CandidateQuery = parseCandidateQuery({}),
+): TopQueueSnapshot {
   if (page.dataset_mode !== "live") {
     return emptyLiveSnapshot(
       "The candidate API did not return a verified live dataset. No records were displayed.",
       "unavailable",
       page,
+      false,
+      query,
     );
   }
 
@@ -276,6 +341,7 @@ export function mapApiCandidatePage(page: ApiCandidatePage): TopQueueSnapshot {
       "rights_disabled",
       page,
       true,
+      query,
     );
   }
 
@@ -288,13 +354,14 @@ export function mapApiCandidatePage(page: ApiCandidatePage): TopQueueSnapshot {
       status === "error" ? "error" : "unavailable",
       page,
       true,
+      query,
     );
   }
 
   const first = page.items[0];
   return {
-    id: `api-${page.read_model_version}`,
-    label: "Verified live candidates",
+    id: `api-${page.read_model_version}-${query.cursor ?? page.items[0]?.id ?? "first"}`,
+    label: "Approved live cohort",
     region: "Central Texas",
     timeZone: first?.timezone ?? "UTC",
     asOf: first?.as_of ?? page.retrieved_at ?? null,
@@ -309,32 +376,64 @@ export function mapApiCandidatePage(page: ApiCandidatePage): TopQueueSnapshot {
       sources: sourceProvenance(page),
       warnings: page.warnings ?? [],
     },
+    cohort: {
+      cohortTotal: page.cohort_total,
+      filteredTotal: page.total,
+      nextCursor: page.next_cursor,
+      appliedFilters: appliedFilters(page),
+    },
     candidates: page.items.map(mapCandidate),
   };
 }
 
-export async function loadTopQueueSnapshot(): Promise<TopQueueSnapshot> {
+export async function loadTopQueueSnapshot(
+  query: CandidateQuery = parseCandidateQuery({}),
+): Promise<TopQueueSnapshot> {
   const baseUrl = process.env.API_BASE_URL;
   if (!baseUrl) {
-    return emptyLiveSnapshot("The live candidate API is not configured.", "error");
+    return emptyLiveSnapshot(
+      "The live candidate API is not configured.",
+      "error",
+      undefined,
+      false,
+      query,
+    );
   }
 
   try {
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/candidates?limit=25`, {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/candidates?${buildCandidateApiQuery(query)}`, {
       cache: "no-store",
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(3_000),
     });
+    const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
-      const body: unknown = await response.json().catch(() => null);
-      if (isCandidatePage(body)) return mapApiCandidatePage(body);
+      if (isCandidatePage(body)) return mapApiCandidatePage(body, query);
       return emptyLiveSnapshot(
         `The live candidate API returned HTTP ${response.status}.`,
         "error",
+        undefined,
+        false,
+        query,
       );
     }
-    return mapApiCandidatePage((await response.json()) as ApiCandidatePage);
+    if (!isCandidatePage(body)) {
+      return emptyLiveSnapshot(
+        "The live candidate API returned an incompatible cohort contract.",
+        "error",
+        undefined,
+        false,
+        query,
+      );
+    }
+    return mapApiCandidatePage(body, query);
   } catch {
-    return emptyLiveSnapshot("The live candidate API was unavailable or timed out.", "error");
+    return emptyLiveSnapshot(
+      "The live candidate API was unavailable or timed out.",
+      "error",
+      undefined,
+      false,
+      query,
+    );
   }
 }

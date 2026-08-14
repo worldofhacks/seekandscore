@@ -9,11 +9,11 @@ watchPatterns = [
   "pyproject.toml",
   "uv.lock",
   "infra/docker/api.Dockerfile",
-  "scripts/runtime/python-entrypoint.sh"
+  "scripts/runtime/**"
 ]
 
 [deploy]
-preDeployCommand = "python -m seekandscore.db.migrate upgrade"
+startCommand = "/app/scripts/runtime/database-role-entrypoint.sh api python -m seekandscore.api"
 healthcheckPath = "/readyz"
 healthcheckTimeout = 300
 restartPolicyType = "ALWAYS"

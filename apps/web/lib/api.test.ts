@@ -47,8 +47,15 @@ const livePage: ApiCandidatePage = {
       },
     },
   ],
-  next_cursor: null,
-  total: 1,
+  next_cursor: "eyJvZmZzZXQiOjUwfQ",
+  total: 127,
+  cohort_total: 953,
+  applied_filters: {
+    q: "FM 973",
+    city: "DEL VALLE",
+    min_acres: 2,
+    max_acres: 20,
+  },
   dataset_mode: "live",
   dataset_status: "current",
   read_model_version: "live-candidate-v1",
@@ -63,7 +70,7 @@ const livePage: ApiCandidatePage = {
       name: "Travis County TNR / TCAD parcel layer",
       status: "current",
       retrieved_at: "2026-08-13T10:30:00Z",
-      record_count: 1,
+      record_count: 953,
     },
   ],
 };
@@ -82,6 +89,17 @@ describe("strict live candidate adapter", () => {
       status: "current",
       retrievedAt: "2026-08-13T10:30:00Z",
       statusDetail: "Opportunity Zone overlay is not yet verified.",
+    });
+    expect(snapshot.cohort).toEqual({
+      cohortTotal: 953,
+      filteredTotal: 127,
+      nextCursor: "eyJvZmZzZXQiOjUwfQ",
+      appliedFilters: {
+        q: "FM 973",
+        city: "DEL VALLE",
+        minAcres: 2,
+        maxAcres: 20,
+      },
     });
     expect(snapshot.candidates).toHaveLength(1);
     expect(snapshot.candidates[0]).toMatchObject({
@@ -124,11 +142,41 @@ describe("strict live candidate adapter", () => {
     });
 
     expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.cohort.cohortTotal).toBe(0);
     expect(snapshot.provenance).toMatchObject({
       mode: "unknown",
       status: "unavailable",
     });
     expect(JSON.stringify(snapshot)).not.toContain("Fictional candidate that must never render");
+  });
+
+  it("preserves a current live cohort when canonical filters match zero records", () => {
+    const snapshot = mapApiCandidatePage({
+      ...livePage,
+      items: [],
+      total: 0,
+      next_cursor: null,
+      applied_filters: {
+        q: "no matching parcel",
+        city: "MANOR",
+        min_acres: null,
+        max_acres: null,
+      },
+    });
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.provenance.status).toBe("current");
+    expect(snapshot.cohort).toEqual({
+      cohortTotal: 953,
+      filteredTotal: 0,
+      nextCursor: null,
+      appliedFilters: {
+        q: "no matching parcel",
+        city: "MANOR",
+        minAcres: null,
+        maxAcres: null,
+      },
+    });
   });
 
   it("rejects records when a live response has an unsupported dataset status", () => {
@@ -145,6 +193,7 @@ describe("strict live candidate adapter", () => {
     });
 
     expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.cohort.cohortTotal).toBe(0);
     expect(snapshot.provenance.status).toBe("unavailable");
     expect(JSON.stringify(snapshot)).not.toContain("Substituted record that must never render");
     expect(JSON.stringify(snapshot)).not.toContain("A substitute dataset was offered.");
@@ -165,6 +214,11 @@ describe("strict live candidate adapter", () => {
     });
 
     expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.cohort).toMatchObject({
+      cohortTotal: 0,
+      filteredTotal: 0,
+      nextCursor: null,
+    });
     expect(snapshot.provenance).toMatchObject({
       mode: "live",
       status: "rights_disabled",
@@ -182,6 +236,60 @@ describe("strict live candidate adapter", () => {
     expect(snapshot.provenance.status).toBe("error");
     expect(snapshot.provenance.statusDetail).toContain("not configured");
     expect(snapshot.asOf).toBeNull();
+  });
+
+  it("requests exactly one 50-record server page with snake-case filters", async () => {
+    vi.stubEnv("API_BASE_URL", "https://api.example.test/");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(livePage), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const snapshot = await loadTopQueueSnapshot({
+      q: "FM 973",
+      city: "DEL VALLE",
+      minAcres: 2,
+      maxAcres: 20,
+      cursor: "opaque-cursor",
+    });
+
+    expect(snapshot.candidates).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const requested = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(requested.pathname).toBe("/v1/candidates");
+    expect(Object.fromEntries(requested.searchParams)).toEqual({
+      limit: "50",
+      q: "FM 973",
+      city: "DEL VALLE",
+      min_acres: "2",
+      max_acres: "20",
+      cursor: "opaque-cursor",
+    });
+  });
+
+  it("fails closed when an API response omits required cohort metadata", async () => {
+    vi.stubEnv("API_BASE_URL", "https://api.example.test");
+    const incompatiblePage: Record<string, unknown> = { ...livePage };
+    delete incompatiblePage.cohort_total;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(incompatiblePage), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const snapshot = await loadTopQueueSnapshot();
+
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.cohort.cohortTotal).toBe(0);
+    expect(snapshot.provenance.statusDetail).toContain("incompatible cohort contract");
+    expect(JSON.stringify(snapshot)).not.toContain("East Austin assessor parcel");
   });
 
   it("preserves a rights-disabled live page returned with HTTP 503", async () => {
@@ -211,6 +319,7 @@ describe("strict live candidate adapter", () => {
     const snapshot = await loadTopQueueSnapshot();
 
     expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.cohort.cohortTotal).toBe(0);
     expect(snapshot.provenance).toMatchObject({
       mode: "live",
       status: "rights_disabled",

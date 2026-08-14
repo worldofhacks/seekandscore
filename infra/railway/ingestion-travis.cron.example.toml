@@ -11,11 +11,11 @@ watchPatterns = [
   "uv.lock",
   "infra/docker/worker.Dockerfile",
   "infra/railway/ingestion-travis.cron.example.toml",
-  "scripts/runtime/python-entrypoint.sh"
+  "scripts/runtime/**"
 ]
 
 [deploy]
-startCommand = "/app/scripts/runtime/python-entrypoint.sh python -m seekandscore.ingestion run --source travis_tcad_parcels"
+startCommand = "/app/scripts/runtime/database-role-entrypoint.sh ingestion python -m seekandscore.ingestion run --source travis_tcad_parcels"
 # Monthly UTC, intentionally offset from midnight. Attach this config only after
 # the manual proof, idempotency check, and kill-switch drill pass.
 cronSchedule = "17 9 2 * *"

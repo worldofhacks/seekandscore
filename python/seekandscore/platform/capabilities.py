@@ -15,6 +15,8 @@ class PlatformCapabilities(BaseModel):
     candidate_read_model_ready: bool
     live_candidate_display_enabled: bool
     ingestion_enabled: bool
+    research_writes_enabled: bool
+    research_store_ready: bool
     alert_delivery_mode: str
     outreach_mode: str
     outreach_send_enabled: bool
@@ -29,6 +31,7 @@ class PlatformCapabilities(BaseModel):
         candidate_serving_mode: str,
         candidate_read_model_ready: bool,
         live_candidate_display_enabled: bool,
+        research_store_ready: bool,
     ) -> "PlatformCapabilities":
         return cls(
             dataset_mode=settings.dataset_mode,
@@ -36,6 +39,8 @@ class PlatformCapabilities(BaseModel):
             candidate_read_model_ready=candidate_read_model_ready,
             live_candidate_display_enabled=live_candidate_display_enabled,
             ingestion_enabled=settings.ingestion_enabled,
+            research_writes_enabled=settings.research_writes_enabled,
+            research_store_ready=research_store_ready,
             alert_delivery_mode=settings.alert_delivery_mode,
             outreach_mode=settings.outreach_mode,
             outreach_send_enabled=settings.outreach_send_enabled,

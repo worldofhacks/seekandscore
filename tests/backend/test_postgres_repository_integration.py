@@ -20,6 +20,11 @@ from seekandscore.acquisition.repository import (
     raw_artifact_table,
     source_run_table,
 )
+from seekandscore.deal import PostgresResearchCaseRepository, ResearchCaseService, ResearchStatus
+from seekandscore.deal.repository import (
+    audit_event_table,
+    research_case_revision_table,
+)
 from seekandscore.readmodels import LiveCandidateRepository
 from seekandscore.registry import InMemorySourceRegistry
 
@@ -39,6 +44,8 @@ def test_artifact_scoped_snapshot_queries_execute_on_postgres() -> None:
     artifact_id = uuid4()
     observation_id = uuid4()
     run_id = uuid4()
+    organization_id = uuid4()
+    actor_id = uuid4()
     sha256 = artifact_id.hex * 2
     artifact = RawArtifact(
         id=artifact_id,
@@ -100,11 +107,17 @@ def test_artifact_scoped_snapshot_queries_execute_on_postgres() -> None:
             limit=25,
             artifact_ids=(artifact_id,),
             cities=("DEL VALLE", "MANOR"),
+            search_query="100 test",
+            min_acres=2,
+            max_acres=2,
         ) == (observation,)
         assert (
             repository.count_latest_observations(
                 artifact_ids=(artifact_id,),
                 cities=("DEL VALLE", "MANOR"),
+                search_query=str(observation_id.int),
+                min_acres=2,
+                max_acres=2,
             )
             == 1
         )
@@ -113,11 +126,76 @@ def test_artifact_scoped_snapshot_queries_execute_on_postgres() -> None:
             InMemorySourceRegistry(),
             display_enabled=True,
         )
-        page = candidates.list(limit=25, cursor=None, dataset_mode="live")
+        page = candidates.list(
+            limit=25,
+            cursor=None,
+            dataset_mode="live",
+            q="100 test",
+            city="DEL VALLE",
+            min_acres=2,
+            max_acres=2,
+        )
         assert page.dataset_status == "current"
         assert page.total == 1
+        assert page.cohort_total == 1
+        assert page.applied_filters.city == "DEL VALLE"
         assert len(page.items) == 1
         assert candidates.get(page.items[0].id) == page.items[0]
+
+        research = ResearchCaseService(PostgresResearchCaseRepository(engine), clock=lambda: now)
+        research_case, created = research.create(
+            organization_id=organization_id,
+            actor_id=actor_id,
+            candidate=page.items[0],
+            status=ResearchStatus.WATCHING,
+            operator_note="Real Postgres integration note",
+            next_action="Verify access",
+        )
+        assert created is True
+        assert research.get_by_candidate(organization_id, page.items[0].id) == research_case
+        updated = research.update(
+            organization_id=organization_id,
+            actor_id=actor_id,
+            case_id=research_case.id,
+            expected_version=1,
+            status=ResearchStatus.RESEARCHING,
+            operator_note=None,
+            next_action="Review survey",
+            update_note=False,
+            update_next_action=True,
+        )
+        assert updated.version == 2
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(research_case_revision_table)
+                    .where(research_case_revision_table.c.research_case_id == research_case.id)
+                )
+                == 2
+            )
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            savepoint = connection.begin_nested()
+            with pytest.raises(sa.exc.DBAPIError, match="append-only"):
+                connection.execute(
+                    sa.delete(research_case_revision_table).where(
+                        research_case_revision_table.c.research_case_id == research_case.id
+                    )
+                )
+            savepoint.rollback()
+            transaction.rollback()
+            assert (
+                connection.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(audit_event_table)
+                    .where(
+                        audit_event_table.c.organization_id == organization_id,
+                        audit_event_table.c.subject_id == str(research_case.id),
+                    )
+                )
+                == 2
+            )
     finally:
         with engine.begin() as connection:
             connection.execute(sa.delete(source_run_table).where(source_run_table.c.id == run_id))

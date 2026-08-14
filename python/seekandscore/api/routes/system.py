@@ -82,4 +82,5 @@ def capabilities(container: Container) -> PlatformCapabilities:
         candidate_serving_mode=container.candidates.serving_mode,
         candidate_read_model_ready=container.candidates.is_ready(),
         live_candidate_display_enabled=container.candidates.display_enabled,
+        research_store_ready=(container.research is not None and container.research.is_ready()),
     )

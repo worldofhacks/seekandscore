@@ -128,6 +128,20 @@ export interface DatasetProvenance {
   warnings: string[];
 }
 
+export interface CandidateAppliedFilters {
+  q: string | null;
+  city: string | null;
+  minAcres: number | null;
+  maxAcres: number | null;
+}
+
+export interface CandidateCohortPage {
+  cohortTotal: number;
+  filteredTotal: number;
+  nextCursor: string | null;
+  appliedFilters: CandidateAppliedFilters;
+}
+
 export interface TopQueueSnapshot {
   id: string;
   label: string;
@@ -136,6 +150,7 @@ export interface TopQueueSnapshot {
   asOf: string | null;
   modelVersion: string;
   provenance: DatasetProvenance;
+  cohort: CandidateCohortPage;
   candidates: CandidateSummary[];
 }
 
@@ -205,10 +220,19 @@ export interface ApiDataSourceProvenance {
   detail?: string;
 }
 
+export interface ApiCandidateAppliedFilters {
+  q: string | null;
+  city: "DEL VALLE" | "MANOR" | null;
+  min_acres: number | null;
+  max_acres: number | null;
+}
+
 export interface ApiCandidatePage {
   items: ApiCandidateReadModel[];
   next_cursor: string | null;
   total: number;
+  cohort_total: number;
+  applied_filters: ApiCandidateAppliedFilters;
   dataset_mode: string;
   read_model_version: string;
   dataset_status?: string;
@@ -221,3 +245,13 @@ export interface ApiCandidatePage {
 }
 
 export type QueueFilter = "all" | "new" | "moved" | "needs_review";
+
+export type {
+  ApiCandidateDossier,
+  ApiResearchCase,
+  ApiResearchCasePage,
+  ApiVerificationGate,
+  ResearchStatus,
+  VerificationGateKey,
+  VerificationGateStatus,
+} from "./research";

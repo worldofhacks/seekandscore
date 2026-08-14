@@ -47,6 +47,7 @@ Do not self-manage Patroni/etcd/PostGIS on Railway for the first release; the op
 flowchart TB
   Internet --> Web["web<br/>Next.js"]
   Web --> API
+  Migrate["db-migrate<br/>one-shot owner"] --> PostGIS
 
   API --> Redis["Redis<br/>queue/cache"]
   API --> PostGIS["PostGIS<br/>source of truth"]
@@ -71,6 +72,7 @@ flowchart TB
 | Service | Railway primitive | Public domain | Persistent volume | MVP replicas | Scale trigger |
 |---|---|---:|---:|---:|---|
 | `web` | persistent service | yes | no | 1 | 2+ at production launch or measured saturation |
+| `db-migrate` | one-shot service | no | no | 0 between releases | runs exact release before API/ingestion |
 | `api` | private persistent service | no | no | 1 | 2+ for availability/load; remain stateless |
 | `worker-discovery` | persistent worker | no | no | 1 | source backlog/latency or rate-isolation needs |
 | `worker-enrichment` | persistent worker | no | no | 1 | CPU/GIS/document backlog |
@@ -93,7 +95,7 @@ Use the repository root as build context for services that consume shared Python
 - an absolute Railway config-file path such as `/infra/railway/api.toml`;
 - root-relative watch patterns including every shared dependency;
 - its own start command;
-- a clear migration owner.
+- a clear runtime role contract; only `db-migrate` owns schema migration.
 
 Railway config files do not automatically follow a configured service root directory. A config path must be set explicitly. Watch paths must include shared contracts, migrations, and lockfiles or a dependency change may fail to redeploy the consumer.
 
@@ -109,7 +111,7 @@ Railway config files do not automatically follow a configured service root direc
 
 Stable `railway.toml`/`railway.json` configuration is per service, not an entire-project blueprint. Railway's TypeScript project-level infrastructure-as-code is beta and mutually exclusive with service config for a controlled service; evaluate it in staging later, not as the MVP control plane.
 
-Representative API configuration (final paths/commands land with the scaffold):
+Representative API configuration:
 
 ```toml
 [build]
@@ -126,8 +128,7 @@ watchPatterns = [
 ]
 
 [deploy]
-preDeployCommand = "python -m seekandscore.db.migrate"
-startCommand = "python -m seekandscore.api"
+startCommand = "/app/scripts/runtime/database-role-entrypoint.sh api python -m seekandscore.api"
 healthcheckPath = "/readyz"
 healthcheckTimeout = 300
 restartPolicyType = "ALWAYS"
@@ -136,9 +137,17 @@ overlapSeconds = 15
 drainingSeconds = 30
 ```
 
-This is a design example, not runnable until the referenced application exists. Validate it with Railway's [Config as Code reference](https://docs.railway.com/config-as-code/reference) and live schema.
+The separate `/infra/railway/db-migrate.example.toml` runs
+`seekandscore.db.release apply` in pre-deploy and `verify` as its one-shot start.
+It alone receives the database owner URL. Validate every config with Railway's
+[Config as Code reference](https://docs.railway.com/config-as-code/reference)
+and live schema.
 
-Worker configurations omit the API migration command and use queue-specific start commands. The scheduler adds a UTC cron expression and must exit after enqueueing work.
+API, worker, ingestion, and scheduler configurations never contain a migration
+command. API and acquisition start only after their exact restricted role audit
+passes. Unprovisioned worker classes deliberately refuse to start. The
+scheduler adds a UTC cron expression only after its own role is approved and
+must exit after enqueueing work.
 
 ## 6. Environments
 
@@ -180,12 +189,15 @@ Requirements:
 
 ## 8. Variables and secrets
 
-Use Railway reference variables for internal services, for example:
+Use Railway reference variables for non-owner internal services, for example:
 
 ```text
-DATABASE_URL=${{PostGIS.DATABASE_URL}}
 REDIS_URL=${{Redis.REDIS_URL}}
 ```
+
+Never map `${{PostGIS.DATABASE_URL}}` to an application runtime. It is the owner
+credential and belongs only on the private `db-migrate` service as
+`MIGRATION_DATABASE_URL`.
 
 Use shared non-secret variables for version/config identifiers and sealed service variables for secrets.
 
@@ -212,6 +224,29 @@ AUTH_SECRET / OIDC settings
 OTEL_EXPORTER_OTLP_ENDPOINT
 SENTRY_DSN
 ```
+
+### Database role variables
+
+Generate distinct 32-128 character URL-safe passwords and construct three
+sealed URLs over Railway private networking. The migration service receives:
+
+```text
+MIGRATION_DATABASE_URL=${{PostGIS.DATABASE_URL}}
+API_DATABASE_LOGIN_ROLE=seekandscore_api
+API_DATABASE_PASSWORD=<sealed URL-safe value>
+API_RUNTIME_DATABASE_URL=<sealed seekandscore_api URL>
+INGESTION_DATABASE_LOGIN_ROLE=seekandscore_ingestion
+INGESTION_DATABASE_PASSWORD=<different sealed URL-safe value>
+INGESTION_RUNTIME_DATABASE_URL=<sealed seekandscore_ingestion URL>
+```
+
+The API receives only `DATABASE_URL=<seekandscore_api URL>`. Manual/monthly
+ingestion and discovery receive only
+`DATABASE_URL=<seekandscore_ingestion URL>`. They never receive
+`MIGRATION_DATABASE_URL`, and their startup audits the exact `DATABASE_URL`
+before executing application code. Enrichment, engagement, OZ importing, and
+scheduling stay undeployed until each has a dedicated contract; no active
+process may use the owner URL as a shortcut.
 
 The web service is private-by-default in `staging` and `production`. Set
 `WEB_PRIVATE_ACCESS_ENABLED=true`, store `WEB_PRIVATE_ACCESS_USERNAME` and a
@@ -253,12 +288,14 @@ Only API and `worker-engagement` receive the engagement policy ID, contact encry
 2. Replace any floating image reference with a tested stable tag/digest.
 3. For the initial `postgis/postgis:17-3.5` service, mount the volume at `/var/lib/postgresql/data` and set `PGDATA=/var/lib/postgresql/data/pgdata`; the volume root contains `lost+found` and cannot itself be initialized as the database directory.
 4. Keep it private.
-5. Create a least-privilege application role and a separate migration role.
-6. Run an idempotent baseline migration that verifies required extensions (`postgis` and only explicitly approved additions).
-7. Set bounded application pools per API/worker replica.
-8. Add GiST/SP-GiST and conventional indexes from measured query plans.
-9. Configure Railway snapshots and the external logical-backup job.
-10. Complete a restore test before loading non-reproducible production data.
+5. Create the private `db-migrate` one-shot service and attach the owner URL only there.
+6. Run its exact release SHA. Alembic creates NOLOGIN API/ingestion capability roles; the release command provisions distinct LOGIN roles and audits both restricted URLs.
+7. Confirm API and ingestion refuse the PostGIS owner URL, DDL, cross-context writes, and extra role membership before attaching either service.
+8. Run an idempotent baseline migration that verifies required extensions (`postgis` and only explicitly approved additions).
+9. Set bounded application pools per API/worker replica.
+10. Add GiST/SP-GiST and conventional indexes from measured query plans.
+11. Configure Railway snapshots and the external logical-backup job.
+12. Complete a restore test before loading non-reproducible production data.
 
 Do not assume point-in-time recovery works for the community PostGIS image; Railway's documented PITR depends on its own pgBackRest-enabled PostgreSQL image. Verify the actual deployed service before declaring PITR in the recovery objective.
 
@@ -298,12 +335,19 @@ The `engage` queue accepts only durable intents created after exact-content appr
 
 ## 12. Migrations and deploy ordering
 
-One designated deployment unit owns schema migration. Do **not** configure the same migration command on API and every worker.
+The private `db-migrate` service is the only deployment unit with schema-owner
+credentials. Do **not** put its URL or migration command on API, ingestion,
+workers, or scheduler. Railway service variables are available to both
+pre-deploy and runtime containers, so an API pre-deploy migration would expose
+the owner secret to API remote-code execution even if normal queries used a
+second URL.
 
 Railway's [pre-deploy command](https://docs.railway.com/deployments/pre-deploy-command) runs after build and before application start, can access environment variables/private networking, uses a separate container without the service volume, is not retried, and blocks deployment on failure.
 
 Migration requirements:
 
+- deploy `db-migrate` at the exact release SHA and require both role audits to pass;
+- deploy API and ingestion only afterward, with their own restricted `DATABASE_URL`;
 - Postgres advisory lock prevents concurrent execution.
 - Expand/contract changes remain compatible with the prior application and workers.
 - Backfills are resumable background jobs, not long blocking schema migrations.
@@ -412,14 +456,15 @@ Railway log throughput/retention is not an audit archive. Store durable audit ev
 1. Create Railway project and staging environment.
 2. Provision pinned PostGIS and Redis privately.
 3. Configure object storage and low-privilege staging credentials.
-4. Create `web`, `api`, workers, and scheduler from the GitHub repository.
+4. Create `web`, `db-migrate`, and `api`; create only the acquisition processes currently approved. Leave unprovisioned workers/scheduler stopped.
 5. Assign per-service config paths, watch patterns, commands, and variables.
-6. Run migration owner; verify the live-only empty state before activating a bounded source.
-7. Generate public staging domains only for web/API.
-8. Verify network isolation, health, graceful shutdown, replay, and dead-letter flow.
-9. Configure backups; perform and document a restore.
-10. Run load and failure tests; record baseline cost/resource use.
-11. If the engagement worker exists, keep it `log_only` with synthetic provider callbacks and prove signature, replay, stale-approval, and late-suppression behavior.
+6. Deploy `db-migrate` at the exact SHA; verify Alembic head plus API and ingestion role audits, then deploy API with only its restricted URL.
+7. Verify the live-only empty state before activating a bounded source; deploy ingestion only with its restricted URL.
+8. Generate a public staging domain only for web; keep API and all data services private.
+9. Verify network isolation, health, graceful shutdown, replay, and dead-letter flow.
+10. Configure backups; perform and document a restore.
+11. Run load and failure tests; record baseline cost/resource use.
+12. Do not deploy engagement until its dedicated database role and separate activation are approved.
 
 ### Gate 2 — production shadow mode
 

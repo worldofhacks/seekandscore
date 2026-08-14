@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 from functools import lru_cache
+from uuid import UUID
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -99,6 +100,11 @@ class Settings(BaseSettings):
     outreach_activation_id: str | None = None
     outreach_legal_review_id: str | None = None
     outreach_provider: str | None = None
+
+    research_writes_enabled: bool = False
+    research_internal_token: str | None = Field(default=None, repr=False)
+    research_organization_id: UUID | None = None
+    research_actor_id: UUID | None = None
 
     database_url: str | None = None
     redis_url: str | None = None
@@ -201,6 +207,25 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "outreach sends require provider, policy, legal-review, and activation records"
                 )
+
+        if self.research_writes_enabled:
+            if not self.database_url:
+                raise ValueError("research writes require DATABASE_URL")
+            if not self.live_source_display_enabled:
+                raise ValueError("research writes require approved live candidate display")
+            if not self.research_internal_token or len(self.research_internal_token) < 32:
+                raise ValueError("research writes require a 32+ character internal token")
+            if (
+                self.research_organization_id is None
+                or self.research_organization_id.int == 0
+                or self.research_actor_id is None
+                or self.research_actor_id.int == 0
+            ):
+                raise ValueError(
+                    "research writes require explicit nonzero organization and actor IDs"
+                )
+            if self.outreach_mode is not OutreachMode.DISABLED or self.outreach_send_enabled:
+                raise ValueError("research writes do not activate or permit outreach")
 
         if (
             self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}

@@ -6,7 +6,7 @@ The roadmap is outcome-based. Calendar dates begin only after critical source ac
 
 | Release | Outcome | Included milestones |
 |---|---|---|
-| `0.1` Foundation | replayable synthetic vertical slice in Railway staging | M0–M1 |
+| `0.1` Foundation | replayable, fail-closed live-only vertical slice in Railway staging | M0–M1 |
 | `0.2` Travis intelligence | approved Travis facts resolved and enriched | M2 |
 | `0.3` Ranking alpha | reviewed deterministic Top 25 on internal data | M3 |
 | `1.0` Central Texas operator MVP | Travis/Bastrop/Caldwell Top 25, map, evidence, watchlist, alerts | M4 |
@@ -45,7 +45,14 @@ The roadmap is outcome-based. Calendar dates begin only after critical source ac
 - Geography/jurisdiction/source/rights registries.
 - Source-run/job state machine and transactional outbox.
 - Immutable artifacts, checksums, observations/evidence, bitemporal intervals, and replay.
-- Synthetic adapter and end-to-end fixture pipeline.
+- Offline-only deterministic fixtures and an end-to-end live-contract test pipeline; deployed runtimes prohibit fixture substitution.
+
+### Implemented expansion checkpoint — August 2026
+
+- Full approved-cohort search, city/acreage filtering, stable parcel IDs, and snapshot-bound cursor pagination.
+- Authenticated saved-research dossiers with optimistic locking, immutable revisions, audit events, and blocked contact/outbound controls.
+- Official 2018 national QOZ archive importer with exact checksum/tract-count validation, immutable source lineage, transactional PostGIS loading, and replay verification; production import remains separately gated.
+- 2027 federal eligibility is modeled as a candidate state only and cannot be promoted to an effective designation without a new reviewed official artifact.
 
 ### Railway staging
 

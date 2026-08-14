@@ -21,6 +21,7 @@ def test_readiness_checks_composed_modules(client: TestClient) -> None:
             "registry": "ok",
             "source_registry": "ok",
             "candidate_read_model": "failed",
+            "research_store": "ok",
             "engagement_guard": "ok",
         },
     }
@@ -33,7 +34,7 @@ def test_version_declares_bounded_contexts(client: TestClient) -> None:
     payload = response.json()
     assert payload["version"] == "0.1.0"
     assert payload["api_version"] == "v1"
-    assert payload["read_model_version"] == "live-assessor-screen-v1"
+    assert payload["read_model_version"] == "live-assessor-explorer-v2"
     assert payload["dataset_mode"] == "live"
     assert payload["candidate_serving_mode"] == "unavailable"
     assert "synthetic" not in response.text.lower()
@@ -41,7 +42,9 @@ def test_version_declares_bounded_contexts(client: TestClient) -> None:
         "platform",
         "registry",
         "identity",
+        "geography",
         "engagement",
+        "deal",
         "acquisition",
     ]
 
@@ -56,6 +59,8 @@ def test_capabilities_fail_closed_by_default(client: TestClient) -> None:
         "candidate_read_model_ready": False,
         "live_candidate_display_enabled": False,
         "ingestion_enabled": False,
+        "research_writes_enabled": False,
+        "research_store_ready": False,
         "alert_delivery_mode": "log",
         "outreach_mode": "disabled",
         "outreach_send_enabled": False,
@@ -83,7 +88,7 @@ def test_candidates_return_honest_live_error_without_database(client: TestClient
 def test_candidate_conditional_request(client: TestClient) -> None:
     response = client.get(
         "/v1/candidates",
-        headers={"If-None-Match": '"live-assessor-screen-v1:stale-cache"'},
+        headers={"If-None-Match": '"live-assessor-explorer-v2:stale-cache"'},
     )
 
     assert response.status_code == 503

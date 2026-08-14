@@ -1,0 +1,90 @@
+schema_version: 1
+source:
+  id: federal_qoz_2018_designations
+  authority: U.S. Department of the Treasury, Community Development Financial Institutions Fund
+  authority_level: official_derivative
+  jurisdiction: US
+  capability: opportunity_zone_geography
+  status: implementation_ready_default_off
+  contains_personal_data: false
+
+official_artifact:
+  landing_page: https://www.cdfifund.gov/opportunity-zones
+  archive_url: https://www.cdfifund.gov/system/files/documents/opportunity-zones%3D8764.-9-10-2019.zip
+  designation_spreadsheet_url: https://www.cdfifund.gov/system/files/documents/designated-qozs.12.14.18.xlsx
+  expected_sha256: 686256f36e2f2f5da6dcea9d6a3f6424eeb994fb97f4f725da14c31576ef7af9
+  expected_bytes: 46685678
+  expected_tract_count: 8764
+  expected_unique_geoid_count: 8764
+  expected_source_geometry_repairs: 1
+  geoid_format: 11-character 2010 Census tract GEOID
+  geometry_vintage: 2010 Census tract boundaries used for the 2018 designations
+  source_srid: 3857
+  immutable_storage: content-addressed SHA-256 object; overwrite prohibited
+  geometry_normalization:
+    method: postgis_st_makevalid_collection_extract_v1
+    applies_only_when_source_geometry_is_invalid: true
+    repair_count_must_match_reviewed_archive: true
+    per_tract_repair_lineage_persisted: true
+  legal_authority:
+    - https://www.irs.gov/pub/irs-drop/n-18-48.pdf
+    - https://www.irs.gov/pub/irs-drop/n-19-42.pdf
+    - https://www.irs.gov/pub/irs-drop/a-21-10.pdf
+    - https://www.irs.gov/pub/irs-drop/n-26-40.pdf
+
+semantic_contract:
+  round_id: us-federal-qoz-2018
+  round_code: "2018"
+  certification_status: treasury_certified
+  current_designation_status: effective
+  effective_intervals:
+    puerto_rico:
+      effective_from: "2017-12-22"
+      effective_from_precision: exact
+      effective_to: "2027-12-31"
+    all_other_designations:
+      effective_from: "2018-01-01"
+      effective_from_precision: year
+      effective_to: "2028-12-31"
+  effective_interval_authority: https://www.irs.gov/pub/irs-drop/n-26-40.pdf
+  screening_only: true
+  tax_or_investment_qualification_claim_allowed: false
+  cross_vintage_membership_transfer_allowed: false
+
+runtime:
+  default_enabled: false
+  command: python -m seekandscore.geography.opportunity_zones run
+  check_command: python -m seekandscore.geography.opportunity_zones check
+  kill_switch: OZ_2018_IMPORT_ENABLED
+  kill_switch_default: false
+  activation_variable: OZ_2018_IMPORT_ACTIVATION_ID
+  exact_activation_id: SRC-CDFI-QOZ-2018-IMPORT-20260813-V1
+  allowed_environments: [staging, production]
+  durable_database_required: true
+  durable_s3_compatible_artifact_store_required: true
+  scheduled_refresh: none
+
+archive_safety:
+  maximum_compressed_bytes: 67108864
+  maximum_uncompressed_bytes: 134217728
+  maximum_member_bytes: 100663296
+  maximum_members: 32
+  maximum_compression_ratio: 200
+  reject_path_traversal: true
+  reject_nested_paths: true
+  reject_symlinks: true
+  reject_encrypted_members: true
+
+rights:
+  review_status: official_reference_source
+  retention_allowed: true
+  internal_use_allowed: true
+  display_allowed: false
+  export_allowed: false
+  redistribution_allowed: false
+  attribution_required: true
+  attribution: U.S. Department of the Treasury, CDFI Fund; 2018 QOZ designations
+  limitations:
+    - Geography supports screening and reference; it does not establish tax eligibility.
+    - Census boundaries are statistical and are not legal land descriptions.
+    - Public display requires a separate product/display approval and boundary-quality treatment.

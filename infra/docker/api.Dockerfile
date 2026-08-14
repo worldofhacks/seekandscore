@@ -15,7 +15,7 @@ COPY python ./python
 COPY services ./services
 COPY migrations ./migrations
 COPY config ./config
-COPY scripts/runtime/python-entrypoint.sh ./scripts/runtime/python-entrypoint.sh
+COPY scripts/runtime/*.sh ./scripts/runtime/
 RUN uv sync --frozen --no-dev
 
 FROM python:3.13.7-slim-bookworm AS runtime
@@ -37,4 +37,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python -c "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.getenv('PORT', '8000')}/readyz\", timeout=3)"
 ENTRYPOINT ["/app/scripts/runtime/python-entrypoint.sh"]
-CMD ["python", "-m", "seekandscore.api"]
+CMD ["/app/scripts/runtime/database-role-entrypoint.sh", "api", "python", "-m", "seekandscore.api"]

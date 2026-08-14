@@ -15,7 +15,7 @@ COPY python ./python
 COPY services ./services
 COPY migrations ./migrations
 COPY config ./config
-COPY scripts/runtime/python-entrypoint.sh ./scripts/runtime/python-entrypoint.sh
+COPY scripts/runtime/*.sh ./scripts/runtime/
 RUN uv sync --frozen --no-dev
 
 FROM python:3.13.7-slim-bookworm AS runtime
@@ -33,4 +33,4 @@ WORKDIR /app
 COPY --from=build --chown=app:app /app /app
 USER 10001:10001
 ENTRYPOINT ["/app/scripts/runtime/python-entrypoint.sh"]
-CMD ["python", "-m", "seekandscore.worker", "--queues", "acquire,parse,resolve,geo,market,score,deliver"]
+CMD ["/app/scripts/runtime/database-role-entrypoint.sh", "unprovisioned", "python", "-m", "seekandscore.worker", "--queues", "acquire,parse,resolve,geo,market,score,deliver"]

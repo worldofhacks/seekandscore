@@ -2,10 +2,11 @@
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.dialects import postgresql
 
 from seekandscore.acquisition.models import (
     NormalizedParcelObservation,
@@ -24,6 +25,7 @@ from seekandscore.api.dependencies import get_container
 from seekandscore.bootstrap import AppContainer
 from seekandscore.platform.settings import Settings
 from seekandscore.readmodels import LiveCandidateRepository
+from seekandscore.readmodels.live_candidates import LIVE_CANDIDATE_NAMESPACE
 from seekandscore.registry import TRAVIS_TCAD_SOURCE, InMemorySourceRegistry
 
 NOW = datetime(2026, 8, 13, 12, tzinfo=UTC)
@@ -92,6 +94,38 @@ def seeded_repository() -> MemoryAcquisitionRepository:
     return repository
 
 
+def explorer_repository() -> MemoryAcquisitionRepository:
+    repository = seeded_repository()
+    original = next(iter(repository.observations.values()))
+    repository.save_observations(
+        (
+            original.model_copy(
+                update={
+                    "id": UUID("11111111-1111-4111-8111-111111111111"),
+                    "source_record_id": "102",
+                    "local_parcel_id": "700002",
+                    "situs_address": "200 MAIN ST MANOR 78653",
+                    "situs_city": "MANOR",
+                    "tcad_acres": 5.0,
+                    "gis_acres": 4.98,
+                }
+            ),
+            original.model_copy(
+                update={
+                    "id": UUID("22222222-2222-4222-8222-222222222222"),
+                    "source_record_id": "103",
+                    "local_parcel_id": "700003",
+                    "situs_address": "300 AIRPORT COMMERCE DR DEL VALLE 78617",
+                    "situs_city": "DEL VALLE",
+                    "tcad_acres": 8.0,
+                    "gis_acres": 7.96,
+                }
+            ),
+        )
+    )
+    return repository
+
+
 def test_postgres_insert_count_uses_returned_ids_not_indeterminate_rowcount() -> None:
     engine = MagicMock()
     result = engine.begin.return_value.__enter__.return_value.execute.return_value
@@ -138,6 +172,28 @@ def test_postgres_snapshot_queries_use_supported_sqlalchemy_json_accessors() -> 
     )
 
 
+def test_postgres_latest_attempt_can_be_scoped_to_the_cohort_profile() -> None:
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.scalar.return_value = None
+
+    result = PostgresAcquisitionRepository(engine).latest_run(
+        "travis_tcad_parcels",
+        run_profile=SourceRunProfile.COHORT,
+    )
+
+    assert result is None
+    statement = connection.scalar.call_args.args[0]
+    compiled = str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "run_profile" in compiled
+    assert "cohort" in compiled
+
+
 def test_live_projection_labels_assessor_values_and_oz_as_unverified() -> None:
     repository = LiveCandidateRepository(
         seeded_repository(),
@@ -162,6 +218,178 @@ def test_live_projection_labels_assessor_values_and_oz_as_unverified() -> None:
     assert candidate.source_observation is not None
     assert candidate.source_observation.fields.appraised_value_cents == 48_000_000
     assert candidate.source_observation.fields.assessed_value_cents == 45_000_000
+
+
+def test_explorer_returns_filtered_and_full_cohort_totals_with_canonical_filters() -> None:
+    repository = LiveCandidateRepository(
+        explorer_repository(),
+        InMemorySourceRegistry(),
+        display_enabled=True,
+    )
+
+    page = repository.list(
+        limit=25,
+        cursor=None,
+        dataset_mode="live",
+        q="  main st  ",
+        city="MANOR",
+        min_acres=5,
+        max_acres=5,
+    )
+
+    assert page.total == 1
+    assert page.cohort_total == 3
+    assert page.applied_filters.model_dump(mode="json") == {
+        "q": "main st",
+        "city": "MANOR",
+        "min_acres": 5.0,
+        "max_acres": 5.0,
+    }
+    candidate = page.items[0]
+    assert candidate.parcel_id == "TCAD-700002"
+    assert candidate.id == uuid5(LIVE_CANDIDATE_NAMESPACE, "us-tx-travis:700002")
+
+
+@pytest.mark.parametrize(
+    ("q", "city", "min_acres", "expected_parcel_id"),
+    (
+        ("700003", None, None, "TCAD-700003"),
+        ("airport commerce", None, None, "TCAD-700003"),
+        ("manor", None, None, "TCAD-700002"),
+        (None, "DEL VALLE", 8.0, "TCAD-700003"),
+    ),
+)
+def test_explorer_filters_only_approved_fields(
+    q: str | None,
+    city: str | None,
+    min_acres: float | None,
+    expected_parcel_id: str,
+) -> None:
+    repository = LiveCandidateRepository(
+        explorer_repository(),
+        InMemorySourceRegistry(),
+        display_enabled=True,
+    )
+
+    page = repository.list(
+        limit=25,
+        cursor=None,
+        dataset_mode="live",
+        q=q,
+        city=city,
+        min_acres=min_acres,
+    )
+
+    assert page.total == 1
+    assert page.cohort_total == 3
+    assert page.items[0].parcel_id == expected_parcel_id
+
+
+def test_explorer_zero_result_is_an_honest_current_filtered_page() -> None:
+    repository = LiveCandidateRepository(
+        explorer_repository(),
+        InMemorySourceRegistry(),
+        display_enabled=True,
+    )
+
+    page = repository.list(
+        limit=25,
+        cursor=None,
+        dataset_mode="live",
+        q="no such approved field value",
+    )
+
+    assert page.dataset_status == "current"
+    assert page.items == ()
+    assert page.total == 0
+    assert page.cohort_total == 3
+    assert page.applied_filters.q == "no such approved field value"
+
+
+def test_explorer_cursor_is_bound_to_filters_and_complete_cohort() -> None:
+    acquisition = explorer_repository()
+    repository = LiveCandidateRepository(
+        acquisition,
+        InMemorySourceRegistry(),
+        display_enabled=True,
+    )
+    first = repository.list(
+        limit=1,
+        cursor=None,
+        dataset_mode="live",
+        city="DEL VALLE",
+    )
+    assert first.next_cursor is not None
+
+    second = repository.list(
+        limit=1,
+        cursor=first.next_cursor,
+        dataset_mode="live",
+        city="DEL VALLE",
+    )
+
+    assert [item.parcel_id for item in first.items] == ["TCAD-700003"]
+    assert [item.parcel_id for item in second.items] == ["TCAD-700001"]
+    with pytest.raises(ValueError, match="requested filters"):
+        repository.list(
+            limit=1,
+            cursor=first.next_cursor,
+            dataset_mode="live",
+            city="MANOR",
+        )
+
+    current = acquisition.latest_complete_run(
+        "travis_tcad_parcels", run_profile=SourceRunProfile.COHORT
+    )
+    assert current is not None
+    acquisition.save_run(
+        current.model_copy(
+            update={
+                "id": UUID("33333333-3333-4333-8333-333333333333"),
+                "started_at": NOW + timedelta(minutes=1),
+                "completed_at": NOW + timedelta(minutes=1),
+                "retrieved_at": NOW + timedelta(minutes=1),
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="current complete cohort"):
+        repository.list(
+            limit=1,
+            cursor=first.next_cursor,
+            dataset_mode="live",
+            city="DEL VALLE",
+        )
+
+
+def test_postgres_explorer_builds_sql_filters_for_approved_fields_only() -> None:
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.scalars.return_value.all.return_value = []
+    repository = PostgresAcquisitionRepository(engine)
+
+    repository.list_latest_observations(
+        limit=25,
+        artifact_ids=(UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),),
+        cities=("MANOR",),
+        search_query="50%_TEST",
+        min_acres=1,
+        max_acres=10,
+    )
+
+    statement = connection.scalars.call_args.args[0]
+    compiled = str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "situs_address" in compiled
+    assert "local_parcel_id" in compiled
+    assert "situs_city" in compiled
+    assert "tcad_acres" in compiled
+    assert "gis_acres" in compiled
+    assert "py_owner" not in compiled
 
 
 def test_live_projection_fails_closed_when_display_rights_are_not_approved() -> None:
@@ -354,6 +582,25 @@ def test_failed_refresh_observations_do_not_leak_into_last_complete_snapshot() -
             }
         )
     )
+    failed_cohort = acquisition.latest_run(
+        "travis_tcad_parcels", run_profile=SourceRunProfile.COHORT
+    )
+    assert failed_cohort is not None
+    acquisition.save_run(
+        failed_cohort.model_copy(
+            update={
+                "id": UUID("abababab-abab-4bab-8bab-abababababab"),
+                "status": SourceRunStatus.PARTIAL,
+                "run_profile": SourceRunProfile.PROOF,
+                "started_at": failed_artifact.retrieved_at + timedelta(minutes=1),
+                "completed_at": failed_artifact.retrieved_at + timedelta(minutes=1),
+                "retrieved_at": failed_artifact.retrieved_at + timedelta(minutes=1),
+                "records_fetched": 2,
+                "partial": True,
+                "error_code": None,
+            }
+        )
+    )
 
     page = LiveCandidateRepository(
         acquisition, InMemorySourceRegistry(), display_enabled=True
@@ -364,6 +611,48 @@ def test_failed_refresh_observations_do_not_leak_into_last_complete_snapshot() -
     assert page.dataset_status == "stale"
     assert page.sources[0].status == "error"
     assert "last complete snapshot" in page.warnings[0]
+    assert page.items[0].evidence.freshness == "stale"
+    assert (
+        LiveCandidateRepository(acquisition, InMemorySourceRegistry(), display_enabled=True).get(
+            page.items[0].id
+        )
+        == page.items[0]
+    )
+
+
+def test_running_cohort_refresh_keeps_last_complete_snapshot_current() -> None:
+    acquisition = seeded_repository()
+    complete = acquisition.latest_complete_run(
+        "travis_tcad_parcels", run_profile=SourceRunProfile.COHORT
+    )
+    assert complete is not None
+    acquisition.save_run(
+        complete.model_copy(
+            update={
+                "id": UUID("acacacac-acac-4cac-8cac-acacacacacac"),
+                "status": SourceRunStatus.RUNNING,
+                "started_at": NOW + timedelta(minutes=1),
+                "completed_at": None,
+                "retrieved_at": None,
+                "records_fetched": 0,
+                "observations_created": 0,
+                "artifact_ids": (),
+            }
+        )
+    )
+    repository = LiveCandidateRepository(
+        acquisition,
+        InMemorySourceRegistry(),
+        display_enabled=True,
+    )
+
+    page = repository.list(limit=25, cursor=None, dataset_mode="live")
+
+    assert page.dataset_status == "current"
+    assert page.sources[0].status == "current"
+    assert not any("refresh failed" in warning for warning in page.warnings)
+    assert page.items[0].evidence.freshness == "current"
+    assert repository.get(page.items[0].id) == page.items[0]
 
 
 def test_new_complete_snapshot_removes_parcels_absent_from_refresh() -> None:
@@ -461,10 +750,53 @@ def test_live_candidate_api_serves_only_durable_projection_and_validates_cursor(
     assert response.json()["dataset_mode"] == "live"
     assert response.json()["total"] == 1
     assert "synthetic" not in response.text.lower()
-    assert response.headers["etag"].startswith('"live-assessor-screen-v1:')
+    assert response.headers["etag"].startswith('"live-assessor-explorer-v2:')
     assert malformed.status_code == 400
     assert malformed.json()["detail"] == "cursor is malformed"
     assert detail.status_code == 200
+
+
+def test_live_candidate_api_validates_and_echoes_explorer_query() -> None:
+    settings = Settings(app_env="test")
+    app = create_app(settings)
+    container = AppContainer.build(settings)
+    object.__setattr__(
+        container,
+        "candidates",
+        LiveCandidateRepository(
+            explorer_repository(),
+            InMemorySourceRegistry(),
+            display_enabled=True,
+        ),
+    )
+    app.dependency_overrides[get_container] = lambda: container
+
+    with TestClient(app) as live_client:
+        response = live_client.get(
+            "/v1/candidates",
+            params={
+                "q": " main ",
+                "city": "MANOR",
+                "min_acres": 5,
+                "max_acres": 5,
+            },
+        )
+        invalid_city = live_client.get("/v1/candidates", params={"city": "AUSTIN"})
+        invalid_range = live_client.get("/v1/candidates", params={"min_acres": 10, "max_acres": 1})
+        overlong_query = live_client.get("/v1/candidates", params={"q": "x" * 101})
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["cohort_total"] == 3
+    assert response.json()["applied_filters"] == {
+        "q": "main",
+        "city": "MANOR",
+        "min_acres": 5.0,
+        "max_acres": 5.0,
+    }
+    assert invalid_city.status_code == 422
+    assert invalid_range.status_code == 422
+    assert overlong_query.status_code == 422
 
 
 def test_live_candidate_etag_is_evaluated_after_projection_availability() -> None:

@@ -1,0 +1,17 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/db-migrate.Dockerfile"
+watchPatterns = [
+  "python/seekandscore/db/**",
+  "migrations/**",
+  "pyproject.toml",
+  "uv.lock",
+  "infra/docker/db-migrate.Dockerfile",
+  "infra/railway/db-migrate.example.toml",
+  "scripts/runtime/db-migrate-entrypoint.sh"
+]
+
+[deploy]
+preDeployCommand = "/app/scripts/runtime/db-migrate-entrypoint.sh python -m seekandscore.db.release apply"
+startCommand = "/app/scripts/runtime/db-migrate-entrypoint.sh python -m seekandscore.db.release verify"
+restartPolicyType = "NEVER"

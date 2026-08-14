@@ -13,7 +13,7 @@ from seekandscore.readmodels import (
     CandidateReadModel,
     CandidateReadUnavailableError,
 )
-from seekandscore.readmodels.candidates import InvalidCursorError
+from seekandscore.readmodels.candidates import CandidateCity, InvalidCursorError
 from seekandscore.version import READ_MODEL_VERSION
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -26,13 +26,26 @@ def list_candidates(
     response: Response,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     cursor: str | None = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    city: Annotated[CandidateCity | None, Query()] = None,
+    min_acres: Annotated[float | None, Query(ge=0, allow_inf_nan=False)] = None,
+    max_acres: Annotated[float | None, Query(ge=0, allow_inf_nan=False)] = None,
     if_none_match: Annotated[str | None, Header()] = None,
 ) -> CandidatePage | Response:
+    if min_acres is not None and max_acres is not None and min_acres > max_acres:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="min_acres must be less than or equal to max_acres",
+        )
     try:
         page = container.candidates.list(
             limit=limit,
             cursor=cursor,
             dataset_mode=container.settings.dataset_mode,
+            q=q,
+            city=city.value if city is not None else None,
+            min_acres=min_acres,
+            max_acres=max_acres,
         )
     except InvalidCursorError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

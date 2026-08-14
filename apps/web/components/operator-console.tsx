@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 
 import type {
   CandidateSummary,
@@ -13,6 +13,13 @@ import type {
 import { Badge, Button, IconButton, Panel, VisuallyHidden } from "@seekandscore/ui";
 
 import {
+  ContactPrepPanel,
+  ResearchPanel,
+  researchStatusLabel,
+  useCandidateDossier,
+  type ResearchMutationState,
+} from "@/components/candidate-dossier";
+import {
   AlertIcon,
   ArrowDownIcon,
   ArrowUpIcon,
@@ -21,8 +28,11 @@ import {
   ClockIcon,
   ExternalIcon,
   LockIcon,
-  SearchIcon,
 } from "@/components/icons";
+import {
+  CandidateFilters,
+  CandidatePagination,
+} from "@/components/candidate-filters";
 import {
   filterCandidates,
   formatMoneyCompact,
@@ -30,6 +40,13 @@ import {
 } from "@/lib/queue";
 import { formatAsOf, formatObserved } from "@/lib/dates";
 import { candidateScoreLabel, candidateValueDisplay } from "@/lib/presentation";
+import {
+  ResearchRequestError,
+  createResearchCase,
+  researchErrorMessage,
+  updateResearchCase,
+  type ResearchCasePatchInput,
+} from "@/lib/research";
 
 const filters: Array<{ id: QueueFilter; label: string }> = [
   { id: "all", label: "All" },
@@ -234,7 +251,7 @@ function DataProvenancePanel({ snapshot }: { snapshot: TopQueueSnapshot }) {
         </ul>
       ) : null}
 
-      {snapshot.candidates.some((candidate) => candidate.screeningOnly) ? (
+      {snapshot.cohort.cohortTotal > 0 ? (
         <p className="data-provenance__screening-note">
           <strong>Research-only screen.</strong> Assessed or appraised values are source
           observations—not offers, acquisition basis, or independent valuations. Screening
@@ -303,7 +320,7 @@ function QueueTable({
         <h3>{emptyTitle ?? "No candidates match this view"}</h3>
         <p>
           {emptyDetail ??
-            "Clear the search or switch filters. The underlying live ranking snapshot is unchanged."}
+            "Switch the page view filters. The server-loaded cohort page is unchanged."}
         </p>
       </div>
     );
@@ -313,7 +330,8 @@ function QueueTable({
     <div className="queue-table-wrap">
       <table className="queue-table">
         <caption className="ui-visually-hidden">
-          Ranked investment candidates. Select a candidate name to inspect its evidence.
+          One server-loaded page from the approved live cohort. Select a candidate name to
+          inspect its evidence.
         </caption>
         <thead>
           <tr>
@@ -396,7 +414,12 @@ function EvidencePanel({
 }) {
   const valueDisplay = candidateValueDisplay(candidate);
   return (
-    <div className="detail-panel__content" id="evidence-content" role="tabpanel">
+    <div
+      aria-labelledby="evidence-tab"
+      className="detail-panel__content"
+      id="evidence-content"
+      role="tabpanel"
+    >
       <section className="decision-read" aria-labelledby="decision-read-heading">
         <div className="section-heading-row">
           <h3 id="decision-read-heading">Decision read</h3>
@@ -494,102 +517,6 @@ function EvidencePanel({
   );
 }
 
-function OutreachPanel({ candidate }: { candidate: CandidateSummary }) {
-  const completed = candidate.outreachGate.reviewedChecks;
-  const percentage = Math.round((completed / candidate.outreachGate.totalChecks) * 100);
-
-  return (
-    <div className="detail-panel__content" id="outreach-content" role="tabpanel">
-      <section className="outreach-lockup" aria-labelledby="outreach-status-heading">
-        <span aria-hidden="true" className="outreach-lockup__icon">
-          <LockIcon height="24" width="24" />
-        </span>
-        <div>
-          <Badge tone="blocked">Send disabled</Badge>
-          <h3 id="outreach-status-heading">Outreach is policy-gated</h3>
-          <p>
-            No communication can leave the system until identity, source, campaign,
-            channel, and exact-message checks all pass.
-          </p>
-        </div>
-      </section>
-
-      <section className="gate-progress" aria-labelledby="gate-progress-heading">
-        <div className="section-heading-row">
-          <h3 id="gate-progress-heading">Activation gate</h3>
-          <span>
-            {completed}/{candidate.outreachGate.totalChecks} reviewed
-          </span>
-        </div>
-        <div
-          aria-label={`${percentage}% of required checks reviewed`}
-          aria-valuemax={100}
-          aria-valuemin={0}
-          aria-valuenow={percentage}
-          className="gate-progress__bar"
-          role="progressbar"
-        >
-          <span style={{ width: `${percentage}%` }} />
-        </div>
-      </section>
-
-      <section className="detail-section" aria-labelledby="preflight-heading">
-        <div className="section-heading-row">
-          <h3 id="preflight-heading">Preflight blockers</h3>
-          <Badge tone="outline">Fail closed</Badge>
-        </div>
-        <ul className="gate-list">
-          {candidate.outreachGate.blockers.map((blocker) => (
-            <li key={blocker}>
-              <AlertIcon />
-              <span>{blocker}</span>
-            </li>
-          ))}
-          <li className="is-complete">
-            <CheckIcon />
-            <span>Candidate and narrow business purpose are recorded</span>
-          </li>
-        </ul>
-      </section>
-
-      <section className="policy-summary" aria-labelledby="policy-heading">
-        <div>
-          <span className="policy-summary__label" id="policy-heading">
-            Active safe default
-          </span>
-          <strong>acquisition-outreach-safe-default-v1</strong>
-        </div>
-        <dl>
-          <div>
-            <dt>Cold SMS</dt>
-            <dd>Disabled</dd>
-          </div>
-          <div>
-            <dt>Automated calls</dt>
-            <dd>Disabled</dd>
-          </div>
-          <div>
-            <dt>Bulk sequences</dt>
-            <dd>Disabled</dd>
-          </div>
-          <div>
-            <dt>Human approval</dt>
-            <dd>Required</dd>
-          </div>
-        </dl>
-      </section>
-
-      <Button className="outreach-disabled-button" disabled variant="primary">
-        <LockIcon />
-        Outbound channels disabled
-      </Button>
-      <p className="outreach-footnote">
-        This interface is a product control, not a determination that outreach is lawful.
-      </p>
-    </div>
-  );
-}
-
 function CandidateDetail({
   candidate,
   timeZone,
@@ -597,7 +524,80 @@ function CandidateDetail({
   candidate: CandidateSummary;
   timeZone: string;
 }) {
-  const [activeTab, setActiveTab] = useState<"evidence" | "outreach">("evidence");
+  const [activeTab, setActiveTab] = useState<"evidence" | "research" | "contact">(
+    "evidence",
+  );
+  const [mutation, setMutation] = useState<ResearchMutationState>({ status: "idle" });
+  const dossier = useCandidateDossier(candidate.id);
+  const researchCase =
+    dossier.state.status === "ready" ? dossier.state.dossier.research_case : null;
+
+  async function saveCandidate() {
+    setActiveTab("research");
+    setMutation({ status: "saving", message: "Saving this parcel to research…" });
+    try {
+      const saved = await createResearchCase(candidate.id);
+      dossier.replaceResearchCase(saved);
+      setMutation({
+        status: "success",
+        message: `Saved to research as ${researchStatusLabel(saved.status)}.`,
+      });
+    } catch (error: unknown) {
+      setMutation({ status: "error", message: researchErrorMessage(error) });
+    }
+  }
+
+  async function saveResearchChanges(input: ResearchCasePatchInput) {
+    if (!researchCase) return;
+    setMutation({ status: "saving", message: "Saving version-matched research changes…" });
+    try {
+      const updated = await updateResearchCase(researchCase, input);
+      dossier.replaceResearchCase(updated);
+      setMutation({
+        status: "success",
+        message: `Research case saved as version ${updated.version}.`,
+      });
+    } catch (error: unknown) {
+      setMutation({ status: "error", message: researchErrorMessage(error) });
+      if (error instanceof ResearchRequestError && error.code === "stale") {
+        dossier.reload();
+      }
+    }
+  }
+
+  function openDossierTab(tab: "research" | "contact") {
+    setActiveTab(tab);
+    if (dossier.state.status === "error") dossier.reload();
+  }
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const tabOrder = ["evidence", "research", "contact"] as const;
+    const currentIndex = tabOrder.indexOf(activeTab);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabOrder.length;
+    if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + tabOrder.length) % tabOrder.length;
+    }
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabOrder.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = tabOrder[nextIndex];
+    if (nextTab === "evidence") setActiveTab("evidence");
+    else openDossierTab(nextTab);
+    document.getElementById(`${nextTab}-tab`)?.focus();
+  }
+
+  const researchActionLabel =
+    dossier.state.status === "loading"
+      ? "Loading saved research"
+      : dossier.state.status === "error"
+        ? "Research unavailable"
+        : researchCase
+          ? `Saved · ${researchStatusLabel(researchCase.status)}`
+          : mutation.status === "saving"
+            ? "Saving…"
+            : "Save to research";
 
   return (
     <Panel as="aside" className="detail-panel" id="evidence-panel">
@@ -612,7 +612,19 @@ function CandidateDetail({
             </p>
           </div>
         </div>
-        <Badge tone="outline">{candidate.screeningOnly ? "Research only" : "Evidence view"}</Badge>
+        <div className="detail-panel__header-actions">
+          <Badge tone="outline">{candidate.screeningOnly ? "Research only" : "Evidence view"}</Badge>
+          <Button
+            disabled={
+              dossier.state.status !== "ready" || mutation.status === "saving"
+            }
+            onClick={researchCase ? () => openDossierTab("research") : saveCandidate}
+            size="small"
+            variant={researchCase ? "secondary" : "primary"}
+          >
+            {researchActionLabel}
+          </Button>
+        </div>
       </header>
 
       <div aria-label="Candidate detail" className="detail-tabs" role="tablist">
@@ -621,30 +633,68 @@ function CandidateDetail({
           aria-selected={activeTab === "evidence"}
           id="evidence-tab"
           onClick={() => setActiveTab("evidence")}
+          onKeyDown={handleTabKeyDown}
           role="tab"
+          tabIndex={activeTab === "evidence" ? 0 : -1}
           type="button"
         >
           Evidence
           <span>{candidate.evidence.length}</span>
         </button>
         <button
-          aria-controls="outreach-content"
-          aria-selected={activeTab === "outreach"}
-          id="outreach-tab"
-          onClick={() => setActiveTab("outreach")}
+          aria-controls="research-content"
+          aria-selected={activeTab === "research"}
+          id="research-tab"
+          onClick={() => openDossierTab("research")}
+          onKeyDown={handleTabKeyDown}
           role="tab"
+          tabIndex={activeTab === "research" ? 0 : -1}
           type="button"
         >
-          Outreach
+          Research
+          <span>{researchCase ? researchStatusLabel(researchCase.status) : "Not saved"}</span>
+        </button>
+        <button
+          aria-controls="contact-content"
+          aria-selected={activeTab === "contact"}
+          id="contact-tab"
+          onClick={() => openDossierTab("contact")}
+          onKeyDown={handleTabKeyDown}
+          role="tab"
+          tabIndex={activeTab === "contact" ? 0 : -1}
+          type="button"
+        >
+          Contact prep
           <LockIcon height="14" width="14" />
         </button>
       </div>
 
       {activeTab === "evidence" ? (
         <EvidencePanel candidate={candidate} timeZone={timeZone} />
+      ) : activeTab === "research" ? (
+        <div
+          aria-labelledby="research-tab"
+          className="dossier-panel-content"
+          id="research-content"
+          role="tabpanel"
+        >
+          <ResearchPanel
+            mutation={mutation}
+            onCreate={saveCandidate}
+            onRetry={dossier.reload}
+            onSave={saveResearchChanges}
+            state={dossier.state}
+            timeZone={timeZone}
+          />
+        </div>
       ) : (
-        <div id="outreach-panel">
-          <OutreachPanel candidate={candidate} />
+        <div
+          aria-labelledby="contact-tab"
+          className="dossier-panel-content"
+          id="contact-content"
+          role="tabpanel"
+        >
+          <ContactPrepPanel onRetry={dossier.reload} state={dossier.state} />
         </div>
       )}
     </Panel>
@@ -653,13 +703,12 @@ function CandidateDetail({
 
 export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
   const [filter, setFilter] = useState<QueueFilter>("all");
-  const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(snapshot.candidates[0]?.id ?? "");
   const [announcement, setAnnouncement] = useState("");
 
   const filteredCandidates = useMemo(
-    () => filterCandidates(snapshot.candidates, filter, search),
-    [filter, search, snapshot.candidates],
+    () => filterCandidates(snapshot.candidates, filter, ""),
+    [filter, snapshot.candidates],
   );
 
   const selectedCandidate =
@@ -679,21 +728,26 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
           100,
       )
     : 0;
-  const hasScreeningCandidates = snapshot.candidates.some(
-    (candidate) => candidate.screeningOnly,
-  );
   const hasCandidates = snapshot.candidates.length > 0;
   const rightsDisabled = snapshot.provenance.status === "rights_disabled";
-  const emptyTitle = rightsDisabled
-    ? "Live records are not approved for display"
-    : "No verified live candidates";
-  const emptyDetail = rightsDisabled
-    ? "A private source run may exist, but parcel observations stay excluded until display rights are approved."
-    : "The console remains empty until the API returns a verified live-only candidate dataset.";
+  const hasLiveCohort =
+    (snapshot.provenance.status === "current" ||
+      snapshot.provenance.status === "stale" ||
+      snapshot.provenance.status === "partial") &&
+    snapshot.cohort.cohortTotal > 0;
+  const emptyTitle = hasLiveCohort
+    ? "No parcels match these cohort filters"
+    : rightsDisabled
+      ? "Live records are not approved for display"
+      : "No verified live candidates";
+  const emptyDetail = hasLiveCohort
+    ? "Adjust or clear the server filters to search the approved live cohort."
+    : rightsDisabled
+      ? "A private source run may exist, but parcel observations stay excluded until display rights are approved."
+      : "The console remains empty until the API returns a verified live-only candidate dataset.";
 
   function reviewChanges() {
     setFilter("new");
-    setSearch("");
     const firstNew = snapshot.candidates.find((candidate) => candidate.newSinceLastReview);
     if (firstNew) setSelectedId(firstNew.id);
     setAnnouncement("Showing new candidates since the last review.");
@@ -737,17 +791,15 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
           <div>
             <div className="eyebrow-row">
               <span>
-                {!hasCandidates
+                {!hasLiveCohort
                   ? rightsDisabled
                     ? "Display control"
                     : "Live dataset status"
-                  : hasScreeningCandidates
-                    ? "Parcel screening"
-                    : "Investment queue"}
+                  : "Parcel screening"}
               </span>
               <Badge
                 tone={
-                  snapshot.provenance.mode === "live" && hasCandidates
+                  snapshot.provenance.mode === "live" && hasLiveCohort
                     ? "accent"
                     : "outline"
                 }
@@ -756,22 +808,18 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
               </Badge>
             </div>
             <h1>
-              {!hasCandidates
+              {!hasLiveCohort
                 ? rightsDisabled
                   ? "Live source records are withheld from this console"
                   : "No verified live candidates"
-                : hasScreeningCandidates
-                  ? "Source-backed parcels for research"
-                  : "Verified live opportunities"}
+                : "Source-backed parcels for research"}
             </h1>
             <p>
-              {!hasCandidates
+              {!hasLiveCohort
                 ? rightsDisabled
                   ? "Live acquisition may run privately for rights review, but no parcel observations, values, or parties are published here."
                   : "No candidate or outreach action is available. Unverified records are never shown."
-                : hasScreeningCandidates
-                  ? `A research-only screen of ${snapshot.region} parcel observations. Source values and unknowns remain explicit.`
-                  : `A ranked, explainable review of verified ${snapshot.region} records. Unknowns stay visible; every decision traces back to evidence.`}
+                : `A research-only screen of ${snapshot.cohort.cohortTotal.toLocaleString("en-US")} approved live ${snapshot.region} parcel observations. Source values and unknowns remain explicit.`}
             </p>
           </div>
           <Button disabled={!hasCandidates} onClick={reviewChanges} variant="primary">
@@ -782,31 +830,27 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
 
         <DataProvenancePanel snapshot={snapshot} />
 
-        {hasCandidates ? (
+        {hasLiveCohort ? (
           <section aria-label="Live queue summary" className="metric-grid">
             <Panel className="metric-card">
-              <span>Verified live queue</span>
-              <strong>{snapshot.candidates.length}</strong>
-              <p>
-                {hasScreeningCandidates
-                  ? "Source records available for research"
-                  : "Eligible after minimum data gates"}
-              </p>
+              <span>Approved live cohort</span>
+              <strong>{snapshot.cohort.cohortTotal.toLocaleString("en-US")}</strong>
+              <p>Source records available for bounded research</p>
             </Panel>
             <Panel className="metric-card">
               <span>Changed</span>
               <strong>{changedCount}</strong>
-              <p>New or materially moved records</p>
+              <p>New or materially moved on this page</p>
             </Panel>
             <Panel className="metric-card">
               <span>Needs review</span>
               <strong>{reviewCount}</strong>
-              <p>Unknown or conflicting evidence</p>
+              <p>Research-state records on this page</p>
             </Panel>
             <Panel className="metric-card">
               <span>Average confidence</span>
               <strong>{averageConfidence}%</strong>
-              <p>Across this live ranking snapshot</p>
+              <p>Across this server-loaded page</p>
             </Panel>
           </section>
         ) : (
@@ -845,7 +889,7 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
                 <div className="section-heading-row">
                   <h2>{snapshot.label}</h2>
                   <Badge tone="accent">
-                    {hasScreeningCandidates
+                    {hasLiveCohort
                       ? "Research only"
                       : rightsDisabled
                         ? "Display disabled"
@@ -853,25 +897,16 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
                   </Badge>
                 </div>
                 <p>
-                  {snapshot.modelVersion} · {hasCandidates ? "stable live snapshot" : "no publishable records"}
+                  {snapshot.modelVersion} · {hasLiveCohort ? "approved live cohort" : "no publishable records"}
                 </p>
               </div>
-              <div className="queue-search">
-                <SearchIcon />
-                <label className="ui-visually-hidden" htmlFor="candidate-search">
-                  Search candidates
-                </label>
-                <input
-                  disabled={!hasCandidates}
-                  id="candidate-search"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search candidates"
-                  type="search"
-                  value={search}
-                />
-                <kbd>/</kbd>
-              </div>
             </header>
+
+            <CandidateFilters
+              enabled={hasLiveCohort}
+              filters={snapshot.cohort.appliedFilters}
+              key={JSON.stringify(snapshot.cohort.appliedFilters)}
+            />
 
             <div className="queue-toolbar">
               <div aria-label="Candidate filters" className="filter-tabs" role="group">
@@ -890,7 +925,9 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
                 ))}
               </div>
               <span className="queue-result-count" role="status">
-                {filteredCandidates.length} shown
+                {filteredCandidates.length.toLocaleString("en-US")} shown of filtered{" "}
+                {snapshot.cohort.filteredTotal.toLocaleString("en-US")} / cohort{" "}
+                {snapshot.cohort.cohortTotal.toLocaleString("en-US")}
               </span>
             </div>
 
@@ -904,16 +941,27 @@ export function OperatorConsole({ snapshot }: { snapshot: TopQueueSnapshot }) {
               }}
               selectedId={selectedId}
             />
+
+            {hasLiveCohort ? (
+              <CandidatePagination
+                filters={snapshot.cohort.appliedFilters}
+                nextCursor={snapshot.cohort.nextCursor}
+              />
+            ) : null}
           </Panel>
 
           {selectedCandidate ? (
-            <CandidateDetail candidate={selectedCandidate} timeZone={snapshot.timeZone} />
+            <CandidateDetail
+              candidate={selectedCandidate}
+              key={selectedCandidate.id}
+              timeZone={snapshot.timeZone}
+            />
           ) : null}
         </div>
 
         <footer className="workspace-footer">
           <p>
-            {hasCandidates
+            {hasLiveCohort
               ? "Source-backed parcel screening. Assessor observations and screening scores are not offers, acquisition basis, or independent valuations. "
               : "No property candidate records are currently displayed, and no unverified records are used. "}
             Data availability never activates owner outreach. Nothing shown is investment, legal,

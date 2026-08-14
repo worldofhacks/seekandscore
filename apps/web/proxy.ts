@@ -5,6 +5,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 const HEALTH_PATH = "/api/health";
+const OPERATOR_HEADER = "x-seekandscore-operator";
 const BASIC_CREDENTIAL_PATTERN = /^Basic ([A-Za-z0-9+/]+={0,2})$/i;
 
 type PrivateAccessState =
@@ -13,12 +14,15 @@ type PrivateAccessState =
   | { mode: "misconfigured" };
 
 function isDeploymentEnvironment(): boolean {
+  if (process.env.NODE_ENV === "production") {
+    return true;
+  }
   const appEnvironment = process.env.APP_ENV;
   if (appEnvironment === "development" || appEnvironment === "test") {
     return false;
   }
   if (appEnvironment === undefined) {
-    return process.env.NODE_ENV === "production";
+    return false;
   }
   return true;
 }
@@ -96,7 +100,13 @@ export function proxy(request: NextRequest): NextResponse {
     return privateResponse("Private access is unavailable.\n", 503);
   }
   if (state.mode === "disabled") {
-    return NextResponse.next();
+    if (process.env.RESEARCH_WRITES_ENABLED === "true") {
+      return privateResponse("Saved research requires enforced private access.\n", 503);
+    }
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.delete("authorization");
+    requestHeaders.delete(OPERATOR_HEADER);
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   if (
@@ -111,6 +121,8 @@ export function proxy(request: NextRequest): NextResponse {
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.delete("authorization");
+  requestHeaders.delete(OPERATOR_HEADER);
+  requestHeaders.set(OPERATOR_HEADER, state.username);
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
   response.headers.set("Vary", "Authorization");

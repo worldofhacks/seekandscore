@@ -1,7 +1,10 @@
 """Internal assessor-screen projection built from latest source observations."""
 
 import base64
+import hashlib
+import json
 from datetime import datetime
+from typing import cast
 from uuid import UUID, uuid5
 
 import sqlalchemy as sa
@@ -9,11 +12,14 @@ import sqlalchemy as sa
 from seekandscore.acquisition.models import (
     FreshnessStatus,
     NormalizedParcelObservation,
+    SourceRun,
     SourceRunProfile,
+    SourceRunStatus,
 )
 from seekandscore.acquisition.repository import AcquisitionRepository
 from seekandscore.identity import CandidateKind
 from seekandscore.readmodels.candidates import (
+    CandidateAppliedFilters,
     CandidatePage,
     CandidateQueueState,
     CandidateReadModel,
@@ -47,13 +53,30 @@ class UnavailableCandidateRepository:
         self.sources = sources
         self.reason = reason
 
-    def list(self, *, limit: int, cursor: str | None, dataset_mode: str) -> CandidatePage:
+    def list(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+        dataset_mode: str,
+        q: str | None = None,
+        city: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
+    ) -> CandidatePage:
         del limit, cursor
+        applied_filters = CandidateAppliedFilters(
+            q=q,
+            city=city,
+            min_acres=min_acres,
+            max_acres=max_acres,
+        )
         return _empty_page(
             sources=self.sources,
             dataset_mode=dataset_mode,
             source_status="unavailable",
             warning=self.reason,
+            applied_filters=applied_filters,
         )
 
     def get(self, candidate_id: UUID) -> CandidateReadModel | None:
@@ -83,15 +106,32 @@ class LiveCandidateRepository:
             display_enabled and source is not None and source.display_allowed
         )
 
-    def list(self, *, limit: int, cursor: str | None, dataset_mode: str) -> CandidatePage:
+    def list(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+        dataset_mode: str,
+        q: str | None = None,
+        city: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
+    ) -> CandidatePage:
         if dataset_mode != "live":
             raise ValueError("live repository requires DATASET_MODE=live")
+        applied_filters = CandidateAppliedFilters(
+            q=q,
+            city=city,
+            min_acres=min_acres,
+            max_acres=max_acres,
+        )
         if not self.display_enabled:
             return _empty_page(
                 sources=self.sources,
                 dataset_mode=dataset_mode,
                 source_status="unavailable",
                 warning="Public live display is disabled by runtime approval gates.",
+                applied_filters=applied_filters,
             )
         if not self.acquisition.is_ready():
             return _empty_page(
@@ -99,10 +139,13 @@ class LiveCandidateRepository:
                 dataset_mode=dataset_mode,
                 source_status="unavailable",
                 warning="The live candidate store is unavailable.",
+                applied_filters=applied_filters,
             )
-        offset = _decode_live_cursor(cursor) if cursor else 0
         try:
-            latest_attempt = self.acquisition.latest_run(LIVE_SOURCE_ID)
+            latest_attempt = self.acquisition.latest_run(
+                LIVE_SOURCE_ID,
+                run_profile=SourceRunProfile.COHORT,
+            )
             last_run = self.acquisition.latest_complete_run(
                 LIVE_SOURCE_ID, run_profile=SourceRunProfile.COHORT
             )
@@ -112,6 +155,7 @@ class LiveCandidateRepository:
                 dataset_mode=dataset_mode,
                 source_status="error",
                 warning="The live candidate store could not complete the request.",
+                applied_filters=applied_filters,
             )
         if last_run is None:
             return _empty_page(
@@ -119,15 +163,41 @@ class LiveCandidateRepository:
                 dataset_mode=dataset_mode,
                 source_status="unknown",
                 warning="No complete approved live cohort is available.",
+                applied_filters=applied_filters,
             )
+        filter_hash = _candidate_filter_hash(applied_filters)
+        offset = (
+            _decode_live_cursor(
+                cursor,
+                cohort_run_id=last_run.id,
+                filter_hash=filter_hash,
+            )
+            if cursor
+            else 0
+        )
+        selected_cities = (
+            (applied_filters.city.value,)
+            if applied_filters.city is not None
+            else TRAVIS_TCAD_AUTHORIZED_CITIES
+        )
         try:
             observations = self.acquisition.list_latest_observations(
                 limit=limit + 1,
                 offset=offset,
                 artifact_ids=last_run.artifact_ids,
-                cities=TRAVIS_TCAD_AUTHORIZED_CITIES,
+                cities=selected_cities,
+                search_query=applied_filters.q,
+                min_acres=applied_filters.min_acres,
+                max_acres=applied_filters.max_acres,
             )
             total = self.acquisition.count_latest_observations(
+                artifact_ids=last_run.artifact_ids,
+                cities=selected_cities,
+                search_query=applied_filters.q,
+                min_acres=applied_filters.min_acres,
+                max_acres=applied_filters.max_acres,
+            )
+            cohort_total = self.acquisition.count_latest_observations(
                 artifact_ids=last_run.artifact_ids,
                 cities=TRAVIS_TCAD_AUTHORIZED_CITIES,
             )
@@ -142,8 +212,9 @@ class LiveCandidateRepository:
                 warning="The live candidate store could not complete the request.",
                 retrieved_at=last_run.retrieved_at,
                 record_count=last_run.records_fetched,
+                applied_filters=applied_filters,
             )
-        if latest_artifact is None or not observations:
+        if latest_artifact is None or cohort_total == 0:
             return _empty_page(
                 sources=self.sources,
                 dataset_mode=dataset_mode,
@@ -151,14 +222,11 @@ class LiveCandidateRepository:
                 warning="The complete cohort has no publishable parcel observations.",
                 retrieved_at=last_run.retrieved_at,
                 record_count=last_run.records_fetched,
+                applied_filters=applied_filters,
+                cohort_total=cohort_total,
             )
         freshness = self.sources.freshness(LIVE_SOURCE_ID, last_run)
-        failed_refresh = bool(
-            latest_attempt is not None
-            and latest_attempt.run_profile is SourceRunProfile.COHORT
-            and latest_attempt.id != last_run.id
-            and not latest_attempt.is_complete_cohort
-        )
+        failed_refresh = _has_failed_cohort_refresh(latest_attempt, last_run)
         status = (
             "stale" if failed_refresh or freshness.status is FreshnessStatus.STALE else "current"
         )
@@ -177,6 +245,7 @@ class LiveCandidateRepository:
                 observation,
                 rank=offset + index + 1,
                 retrieved_at=retrieved_at,
+                freshness=status,
             )
             for index, observation in enumerate(visible)
         )
@@ -184,8 +253,18 @@ class LiveCandidateRepository:
         assert source is not None
         return CandidatePage(
             items=items,
-            next_cursor=_encode_live_cursor(offset + limit) if has_more else None,
+            next_cursor=(
+                _encode_live_cursor(
+                    offset + len(visible),
+                    cohort_run_id=last_run.id,
+                    filter_hash=filter_hash,
+                )
+                if has_more
+                else None
+            ),
             total=total,
+            cohort_total=cohort_total,
+            applied_filters=applied_filters,
             dataset_mode="live",
             dataset_status=status,
             retrieved_at=retrieved_at,
@@ -221,6 +300,10 @@ class LiveCandidateRepository:
             raise CandidateReadUnavailableError("The live candidate store is unavailable.")
         # Detail lookups remain bounded for this screening slice.
         try:
+            latest_attempt = self.acquisition.latest_run(
+                LIVE_SOURCE_ID,
+                run_profile=SourceRunProfile.COHORT,
+            )
             last_run = self.acquisition.latest_complete_run(
                 LIVE_SOURCE_ID, run_profile=SourceRunProfile.COHORT
             )
@@ -233,6 +316,13 @@ class LiveCandidateRepository:
                 artifact_ids=last_run.artifact_ids,
                 cities=TRAVIS_TCAD_AUTHORIZED_CITIES,
             )
+            source_freshness = self.sources.freshness(LIVE_SOURCE_ID, last_run)
+            evidence_freshness = (
+                "stale"
+                if _has_failed_cohort_refresh(latest_attempt, last_run)
+                or source_freshness.status is FreshnessStatus.STALE
+                else source_freshness.status.value
+            )
         except CandidateReadUnavailableError:
             raise
         except sa.exc.SQLAlchemyError as error:
@@ -244,6 +334,7 @@ class LiveCandidateRepository:
                 observation,
                 rank=rank,
                 retrieved_at=last_run.retrieved_at or observation.observed_at,
+                freshness=evidence_freshness,
             )
             if candidate.id == candidate_id:
                 return candidate
@@ -258,6 +349,7 @@ def _project_candidate(
     *,
     rank: int,
     retrieved_at: datetime,
+    freshness: str,
 ) -> CandidateReadModel:
     acreage = observation.tcad_acres or observation.gis_acres or 0.01
     display_name = observation.situs_address or f"TCAD parcel {observation.local_parcel_id}"
@@ -284,7 +376,10 @@ def _project_candidate(
         )
     )
     screening_score = min(100.0, round(35 + completeness * 8 + min(acreage, 25), 1))
-    candidate_id = uuid5(LIVE_CANDIDATE_NAMESPACE, observation.local_parcel_id)
+    candidate_id = uuid5(
+        LIVE_CANDIDATE_NAMESPACE,
+        f"{observation.jurisdiction_id}:{observation.local_parcel_id}",
+    )
     return CandidateReadModel(
         id=candidate_id,
         display_name=display_name,
@@ -314,7 +409,7 @@ def _project_candidate(
         evidence=EvidenceSummary(
             source_count=1,
             unresolved_conflict_count=0,
-            freshness="current",
+            freshness=freshness,
         ),
         as_of=retrieved_at,
         screening_only=True,
@@ -335,6 +430,21 @@ def _project_candidate(
     )
 
 
+def _has_failed_cohort_refresh(
+    latest_attempt: SourceRun | None,
+    last_complete: SourceRun,
+) -> bool:
+    """Return true when a newer cohort attempt cannot replace the last complete snapshot."""
+
+    return bool(
+        latest_attempt is not None
+        and latest_attempt.run_profile is SourceRunProfile.COHORT
+        and latest_attempt.id != last_complete.id
+        and latest_attempt.status is not SourceRunStatus.RUNNING
+        and not latest_attempt.is_complete_cohort
+    )
+
+
 def _empty_page(
     *,
     sources: InMemorySourceRegistry,
@@ -343,6 +453,8 @@ def _empty_page(
     warning: str,
     retrieved_at: datetime | None = None,
     record_count: int | None = None,
+    applied_filters: CandidateAppliedFilters | None = None,
+    cohort_total: int = 0,
 ) -> CandidatePage:
     source = sources.get(LIVE_SOURCE_ID)
     source_summaries = (
@@ -363,6 +475,8 @@ def _empty_page(
         items=(),
         next_cursor=None,
         total=0,
+        cohort_total=cohort_total,
+        applied_filters=applied_filters or CandidateAppliedFilters(),
         dataset_mode=dataset_mode,
         dataset_status="error",
         retrieved_at=retrieved_at,
@@ -371,20 +485,59 @@ def _empty_page(
     )
 
 
-def _encode_live_cursor(offset: int) -> str:
-    encoded = base64.urlsafe_b64encode(f"live:{READ_MODEL_VERSION}:{offset}".encode())
+def _candidate_filter_hash(filters: CandidateAppliedFilters) -> str:
+    canonical = json.dumps(
+        filters.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _encode_live_cursor(
+    offset: int,
+    *,
+    cohort_run_id: UUID,
+    filter_hash: str,
+) -> str:
+    payload = json.dumps(
+        {
+            "filter_hash": filter_hash,
+            "kind": "live",
+            "offset": offset,
+            "run_id": str(cohort_run_id),
+            "version": READ_MODEL_VERSION,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    encoded = base64.urlsafe_b64encode(payload.encode())
     return encoded.decode().rstrip("=")
 
 
-def _decode_live_cursor(cursor: str) -> int:
+def _decode_live_cursor(
+    cursor: str,
+    *,
+    cohort_run_id: UUID,
+    filter_hash: str,
+) -> int:
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
-        prefix, version, raw_offset = (
-            base64.b64decode(padded, altchars=b"-_", validate=True).decode().rsplit(":", maxsplit=2)
-        )
-        offset = int(raw_offset)
+        decoded = base64.b64decode(padded, altchars=b"-_", validate=True).decode()
+        raw_payload: object = json.loads(decoded)
     except (ValueError, UnicodeDecodeError) as error:
         raise InvalidCursorError("cursor is malformed") from error
-    if prefix != "live" or version != READ_MODEL_VERSION or offset < 0:
+    expected_fields = {"filter_hash", "kind", "offset", "run_id", "version"}
+    if not isinstance(raw_payload, dict) or set(raw_payload) != expected_fields:
+        raise InvalidCursorError("cursor is malformed")
+    payload = cast(dict[str, object], raw_payload)
+    raw_offset = payload["offset"]
+    if isinstance(raw_offset, bool) or not isinstance(raw_offset, int) or raw_offset < 0:
+        raise InvalidCursorError("cursor is malformed")
+    if payload["kind"] != "live" or payload["version"] != READ_MODEL_VERSION:
         raise InvalidCursorError("cursor does not match this read-model version")
-    return offset
+    if payload["run_id"] != str(cohort_run_id):
+        raise InvalidCursorError("cursor does not match the current complete cohort")
+    if payload["filter_hash"] != filter_hash:
+        raise InvalidCursorError("cursor does not match the requested filters")
+    return raw_offset
