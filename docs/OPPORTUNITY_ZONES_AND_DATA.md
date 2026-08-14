@@ -64,6 +64,25 @@ stateDiagram-v2
 
 State nominations may be revised during the allowed process. Snapshot state publications and retain transaction time. Do not overwrite the prior nomination set or promote it to `treasury_certified` without Treasury authority.
 
+### Implemented 2018 geography foundation
+
+The isolated importer at `seekandscore.geography.opportunity_zones` implements the frozen 2018 CDFI archive only. It verifies the reviewed archive's exact SHA-256 and byte count, rejects unsafe ZIPs, requires exactly 8,764 unique 11-character GEOIDs, preserves the archive's 2010-vintage EPSG:3857 multipolygons, and loads the complete set transactionally behind a PostGIS validity check and GiST index. The reviewed archive contains exactly one invalid source topology; its immutable ZIP remains the source of truth, while the database records a deterministic `ST_MakeValid` polygon extraction and explicit per-tract repair lineage. Any future repair-count change fails closed.
+
+The importer is inert by default. A run requires both:
+
+```text
+OZ_2018_IMPORT_ENABLED=true
+OZ_2018_IMPORT_ACTIVATION_ID=SRC-CDFI-QOZ-2018-IMPORT-20260813-V1
+```
+
+It also requires staging or production, PostGIS, and durable S3-compatible artifact storage. The kill switch is `OZ_2018_IMPORT_ENABLED=false`; no Railway schedule or production activation is committed. The command is:
+
+```bash
+python -m seekandscore.geography.opportunity_zones run
+```
+
+Replaying the identical artifact verifies the stored tract set and records `succeeded_unchanged`; it never overwrites a conflicting or partial frozen layer. The importer separately records `treasury_certified` lineage and the currently `effective` legacy interval from Notice 2026-40. Puerto Rico tracts retain their exact December 22, 2017–December 31, 2027 interval; other 2018 designations use year-precision 2018 start metadata and a December 31, 2028 end. Year precision is explicit so January 1 is never mistaken for an exact certification date. None of these statuses is a parcel-level tax eligibility claim. The separate 2027 eligibility source has no import adapter and is prohibited from producing `effective` records.
+
 The platform should poll Treasury/IRS and participating state sources frequently during nomination/certification periods and less frequently after the cohort is effective. Every publication is stored with URI, retrieval timestamp, effective/release date, SHA-256, parser version, and raw object location.
 
 ## 4. Designation schema

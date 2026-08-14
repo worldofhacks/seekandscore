@@ -1,0 +1,22 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/worker.Dockerfile"
+watchPatterns = [
+  "python/seekandscore/acquisition/**",
+  "python/seekandscore/geography/opportunity_zones/**",
+  "python/seekandscore/identity/**",
+  "python/seekandscore/db/roles.py",
+  "config/sources/us/federal/qualified-opportunity-zones-2018.yaml",
+  "migrations/**",
+  "pyproject.toml",
+  "uv.lock",
+  "infra/docker/worker.Dockerfile",
+  "infra/railway/oz-membership-verify.example.toml",
+  "scripts/runtime/**"
+]
+
+[deploy]
+# Read-only replay/invariant verification. This config never imports source
+# bytes or builds memberships and therefore has no activation switch.
+startCommand = "/app/scripts/runtime/database-role-entrypoint.sh oz-membership python -m seekandscore.geography.opportunity_zones verify"
+restartPolicyType = "NEVER"

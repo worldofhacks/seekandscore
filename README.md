@@ -2,7 +2,7 @@
 
 Seek and Score is a planning-first, explainable property-intelligence platform for discovering, underwriting, and ranking real-estate investment opportunities. Central Texas is the launch market; the architecture is intentionally designed to add county-by-county data adapters and Opportunity Zone cohorts across the United States without forking the core product.
 
-> Status: architecture and delivery planning. No production application or live investment recommendations exist yet.
+> Status: live-only property research platform. The deployed runtime never serves synthetic candidates or substitutes fixtures when a source fails. The first bounded Travis County parcel feed supports attributed reference display of reviewed non-owner fields. Full-cohort exploration and durable research dossiers are implemented; export, redistribution, owner/contact use, automated outreach, and production investment recommendations remain disabled. The official nationwide 2018 Opportunity Zone geography importer is implemented but remains separately gated and default-off until its first private import is approved and run.
 
 ## North-star outcome
 
@@ -59,12 +59,53 @@ Parcel location is also not a legal conclusion that an investment qualifies for 
 
 See [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.md).
 
+## What runs today
+
+The foundation slice is intentionally useful without implying that assessor observations are investment recommendations:
+
+- a responsive Next.js operator console with a live parcel-screening queue, provenance, risks, filters, and candidate drill-down;
+- full-cohort server-side search, city and acreage filters, stable parcel identifiers, and snapshot-bound cursor pagination across the approved live cohort;
+- authenticated, organization-scoped saved-research dossiers with notes, next actions, optimistic concurrency, database-immutable revisions, and server-derived verification gates;
+- a FastAPI read API with health, version, capabilities, live candidate list, candidate detail, and source-status endpoints;
+- modular backend boundaries for platform, registry, identity, and engagement;
+- policy-gated outreach states where every outbound channel and send action fails closed;
+- Alembic foundations for the registry, identity, engagement, and platform schemas;
+- worker and scheduler entrypoints with inert defaults;
+- PostGIS, Redis, and private MinIO services for local development;
+- a bounded Travis County TNR/TCAD parcel adapter with immutable raw artifacts, replay-safe observations, freshness/provenance status, and an independent public-display gate;
+- a source-pinned federal 2018 Opportunity Zone importer that validates the official CDFI archive checksum, all 8,764 unique 2010-vintage tract GEOIDs, geometry validity/repair lineage, transactional PostGIS loading, and unchanged replay;
+- non-root production containers, continuous integration, configuration validation, and credential scanning.
+
+The web application requires the API and verified live observations. If either is unavailable, it shows an explicit zero-candidate error or waiting state; it never substitutes fixture records. Saved research additionally requires private web authentication, a private API origin, and explicit organization/actor/runtime gates. See the [live ingestion runbook](docs/LIVE_INGESTION_RUNBOOK.md) for the reviewed cohort, activation gates, source limitations, and Railway proof procedure.
+
+## Quick start
+
+Prerequisites are Python 3.12+, [uv](https://docs.astral.sh/uv/), Node.js 22+, pnpm 10+, and Docker for the infrastructure profile.
+
+```bash
+make install
+make check
+```
+
+Run the API and web application in separate terminals:
+
+```bash
+uv run python -m seekandscore.api
+pnpm dev
+```
+
+Then open `http://localhost:3000`. The API exposes `http://localhost:8000/readyz`, `/version`, `/v1/capabilities`, and `/v1/candidates`.
+
+For local persistence services, use `make infra-up`. To build and run the complete container stack with the same safe defaults, use `make app-up`.
+
 ## Repository guide
 
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — phases, deliverables, acceptance criteria, dependencies, and risks
+- [Expansion capabilities](docs/EXPANSION_CAPABILITIES.md) — implemented reach, next capability slices, and national activation gates
 - [System architecture](docs/ARCHITECTURE.md) — bounded contexts, data flow, contracts, deployment units, and scale path
 - [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.md) — cohort-aware model and authoritative data hierarchy
 - [Railway deployment plan](docs/RAILWAY_DEPLOYMENT.md) — service topology, environments, migrations, backups, and production caveats
+- [Live ingestion runbook](docs/LIVE_INGESTION_RUNBOOK.md) — official source register, bounded acquisition contract, rights gates, and staged rollout
 - [Delivery roadmap](docs/ROADMAP.md) — epics and milestone sequence
 - [Product definition](docs/PRODUCT_DEFINITION.md) — users, strategies, workflows, and success measures
 - [Owner and representative outreach](docs/OUTREACH_WORKFLOW.md) — party resolution, policy preflight, communication, scheduling, and information requests
@@ -83,9 +124,10 @@ See [Opportunity Zone and national data design](docs/OPPORTUNITY_ZONES_AND_DATA.
 8. The Top 25 is a precomputed read model; user requests never wait on live source fetches.
 9. Data access, licensing, privacy, and outreach rules are product requirements.
 10. Acquisition outreach is party-verified, policy-gated, human-approved, suppressible, and auditable.
-11. A second, dissimilar market must prove the abstraction before national expansion.
+11. Every runtime is live-only; missing or failed sources produce an honest empty state, never substitute property records.
+12. A second, dissimilar market must prove the abstraction before national expansion.
 
-## Proposed monorepo shape
+## Monorepo shape
 
 ```text
 apps/
@@ -97,25 +139,28 @@ packages/
   contracts/            OpenAPI, JSON Schema, generated clients
   ui/                   shared TypeScript UI primitives
 python/seekandscore/
-  modules/              backend bounded contexts
-  adapters/             source-provider implementations
-config/
-  regions/              geography and jurisdiction packs
-  scoring/              versioned deterministic score models
-  outreach/             versioned channel and jurisdiction-safe defaults
+  platform/             configuration and shared application primitives
+  registry/             geography-neutral property registry contracts
+  identity/             parties, roles, and identity evidence
+  geography/            versioned federal and local spatial layers
+  deal/                 saved research and acquisition workflow state
+  engagement/           policy-gated contact and scheduling boundary
 infra/
+  docker/               production container definitions
   railway/              service configuration and runbooks
 docs/
   adr/                   architecture decision records
+tests/
+  backend/               API, settings, read-model, and runtime tests
 ```
 
-This structure is the target scaffold for Milestone 1; the current repository intentionally begins with decisions and execution criteria before code.
+Source adapters, regional packs, scoring configurations, and live provider integrations will be added behind these boundaries in later milestones.
 
 ## Railway strategy
 
-Railway will host stateless web/API/worker processes and the initial Redis/PostGIS services. The MVP can use a single Railway PostGIS node with tested backups. Railway's native PostgreSQL high-availability conversion does not support the community PostGIS image, so production scale has an explicit decision gate: accept the documented single-node risk or move PostGIS to a managed HA provider while leaving the applications on Railway.
+Railway hosts the stateless web/API/worker processes and can host the initial Redis/PostGIS services. The MVP can use a single Railway PostGIS node with tested backups. Railway's native PostgreSQL high-availability conversion does not support the community PostGIS image, so production scale has an explicit decision gate: accept the documented single-node risk or move PostGIS to a managed HA provider while leaving the applications on Railway.
 
-No Railway project is created in this planning commit. Deployment starts after the foundation service has health endpoints, migrations, a synthetic fixture dataset, and a restore-tested database.
+The public staging application is live-only and database-backed. Its first source approval is limited to attributed reference display of the reviewed parcel/site field allowlist; ingestion, display, export, redistribution, and outreach remain independent controls. Provider outreach remains a separate production activation decision.
 
 ## Important boundaries
 

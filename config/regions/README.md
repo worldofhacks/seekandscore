@@ -16,6 +16,6 @@ Each version should declare:
 
 Credentials never belong in region packs. Use secret-variable references resolved by the runtime.
 
-The example Central Texas pack is a planning artifact. Sources remain `planned` until Milestone 0 confirms supported access and rights.
+The Central Texas pack records the first approved bounded reference-display source. Approval is scoped: the Travis TNR/TCAD adapter may collect and display its reviewed non-owner field allowlist with attribution and screening limitations, but may not export, redistribute, or use the feed for contact discovery. Environment activation and the ingestion kill switch remain independent controls.
 
 Property location is only one outreach-policy input. Participant, sender, organization, contact-source, and campaign jurisdictions may also matter. A region pack may reference a reviewed policy but cannot declare a channel legal or bypass a stricter suppression/source/organization rule.

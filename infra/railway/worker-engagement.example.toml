@@ -11,11 +11,12 @@ watchPatterns = [
   "migrations/**",
   "pyproject.toml",
   "uv.lock",
-  "infra/docker/worker.Dockerfile"
+  "infra/docker/worker.Dockerfile",
+  "scripts/runtime/**"
 ]
 
 [deploy]
-startCommand = "python -m seekandscore.worker --queues engage"
+startCommand = "/app/scripts/runtime/database-role-entrypoint.sh unprovisioned python -m seekandscore.worker --queues engage"
 restartPolicyType = "ALWAYS"
 restartPolicyMaxRetries = 10
 drainingSeconds = 60

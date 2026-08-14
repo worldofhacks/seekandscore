@@ -1,0 +1,23 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/worker.Dockerfile"
+watchPatterns = [
+  "python/seekandscore/acquisition/**",
+  "python/seekandscore/geography/opportunity_zones/**",
+  "python/seekandscore/identity/**",
+  "python/seekandscore/db/roles.py",
+  "config/sources/us/federal/qualified-opportunity-zones-2018.yaml",
+  "migrations/**",
+  "pyproject.toml",
+  "uv.lock",
+  "infra/docker/worker.Dockerfile",
+  "infra/railway/oz-membership-build.cron.example.toml",
+  "scripts/runtime/**"
+]
+
+[deploy]
+startCommand = "/app/scripts/runtime/database-role-entrypoint.sh oz-membership python -m seekandscore.geography.opportunity_zones build"
+# Monthly UTC, 30 minutes after the approved Travis cohort refresh. The builder
+# refuses a running/failed/partial latest TCAD attempt or incomplete geometry.
+cronSchedule = "47 9 2 * *"
+restartPolicyType = "NEVER"

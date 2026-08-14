@@ -1,0 +1,14 @@
+[
+  {
+    "tract_geoid": "01001020100",
+    "state_name": "Alabama",
+    "county_name": "Autauga",
+    "rings": [[[0, 0], [0, 100], [100, 100], [100, 0], [0, 0]]]
+  },
+  {
+    "tract_geoid": "72001080100",
+    "state_name": "Puerto Rico",
+    "county_name": "Adjuntas",
+    "rings": [[[200, 200], [200, 300], [300, 300], [300, 200], [200, 200]]]
+  }
+]

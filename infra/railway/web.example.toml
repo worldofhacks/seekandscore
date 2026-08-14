@@ -1,16 +1,18 @@
 [build]
-builder = "RAILPACK"
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/web.Dockerfile"
 watchPatterns = [
   "apps/web/**",
   "packages/ui/**",
   "packages/contracts/**",
   "package.json",
   "pnpm-lock.yaml",
-  "pnpm-workspace.yaml"
+  "pnpm-workspace.yaml",
+  "infra/docker/web.Dockerfile",
+  "scripts/runtime/web-entrypoint.sh"
 ]
 
 [deploy]
-startCommand = "pnpm --filter @seekandscore/web start"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "ALWAYS"

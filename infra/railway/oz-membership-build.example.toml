@@ -1,0 +1,22 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/worker.Dockerfile"
+watchPatterns = [
+  "python/seekandscore/acquisition/**",
+  "python/seekandscore/geography/opportunity_zones/**",
+  "python/seekandscore/identity/**",
+  "python/seekandscore/db/roles.py",
+  "config/sources/us/federal/qualified-opportunity-zones-2018.yaml",
+  "migrations/**",
+  "pyproject.toml",
+  "uv.lock",
+  "infra/docker/worker.Dockerfile",
+  "infra/railway/oz-membership-build.example.toml",
+  "scripts/runtime/**"
+]
+
+[deploy]
+# Manual parcel-membership materialization only. It remains independent of the
+# federal archive-import gate and must reject incomplete parcel geometry.
+startCommand = "/app/scripts/runtime/database-role-entrypoint.sh oz-membership python -m seekandscore.geography.opportunity_zones build"
+restartPolicyType = "NEVER"

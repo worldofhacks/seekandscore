@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seekandscore"
+version = "0.1.0"
+description = "Modular property intelligence and acquisition workflow platform"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "alembic>=1.14,<2",
+  "boto3>=1.40,<2",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "psycopg[binary]>=3.2,<4",
+  "pyshp>=2.3,<3",
+  "pydantic-settings>=2.10,<3",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.scripts]
+seekandscore-api = "seekandscore.api.__main__:main"
+seekandscore-worker = "seekandscore.worker.__main__:main"
+seekandscore-scheduler = "seekandscore.scheduler.__main__:main"
+seekandscore-migrate = "seekandscore.db.migrate:main"
+seekandscore-ingest = "seekandscore.ingestion.__main__:main"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.17,<2",
+  "pyyaml>=6.0,<7",
+  "pytest>=8.4,<10",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/seekandscore"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests/backend"]
+
+[tool.coverage.run]
+branch = true
+source = ["seekandscore"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 85
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["python", "services", "tests/backend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"migrations/versions/*.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "python"
+packages = ["seekandscore"]
+exclude = ["migrations"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["alembic.*", "boto3.*", "botocore.*", "shapefile"]
+ignore_missing_imports = true

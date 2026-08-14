@@ -17,10 +17,10 @@ This is the Phase 0 control document, not permission to automate any source. A s
 
 | Jurisdiction | Capability | Candidate authority/source | MVP mechanism | Status | Primary unknown |
 |---|---|---|---|---|---|
-| Travis | assessor/parcel | Travis Central Appraisal District | official bulk/API/export preferred | discovery | bulk availability, geometry, terms |
-| Bastrop | assessor/parcel | Bastrop Central Appraisal District | official bulk/API/export preferred | discovery | fields, geometry, cadence, terms |
-| Caldwell | assessor/parcel | Caldwell County Appraisal District | official bulk/API/export preferred | discovery | fields, geometry, cadence, terms |
-| Travis | tax delinquency/foreclosure | Travis County Tax Office | official published files/pages | discovery | format/history/retention |
+| Travis | assessor/parcel | Travis County TNR monthly TCAD ArcGIS layer | bounded paginated query | approved | Reference display only; export, redistribution, and owner/contact use prohibited by project policy |
+| Bastrop | assessor/parcel | Bastrop CAD official certified/GIS ZIPs | official bulk download after disclaimer | rights_review | disclaimer scope, retention/display/export rights |
+| Caldwell | assessor/parcel | Caldwell CAD annual public exports | official bulk download | rights_review | retention/display/export rights, geometry |
+| Travis | tax delinquency/foreclosure | Travis County Tax Office daily CSV and sale pages | official bulk file; sale page later | rights_review | retention/display rights, event withdrawal/history |
 | Bastrop | tax delinquency/foreclosure | county tax authority/sale authority | to determine | discovery | authority and publication method |
 | Caldwell | tax delinquency/foreclosure | county tax authority/sale authority | to determine | discovery | authority and publication method |
 | Travis | civil tax/real-estate cases | District Clerk | manual flag/import first | discovery | automation terms/access/document rights |
@@ -31,13 +31,15 @@ This is the Phase 0 control document, not permission to automate any source. A s
 | launch counties | active listings | licensed feed/provider | manual import until selected | blocked | provider, contract, price, display rights |
 | launch counties | sold comparables | licensed/public sources | manual/approved provider | blocked | Texas nondisclosure and licensing |
 | federal/local | parcel geometry | CAD/county/local GIS | official download/service | discovery | authority, vintage, completeness |
-| federal | flood | FEMA NFHL/products | official download/service | discovery | effective-layer update process |
-| federal | Opportunity Zones | IRS/Treasury + Census geometry | official files | discovery | 2027 final publication lifecycle |
+| federal | flood | FEMA NFHL/Map Service Center | official bulk download/service | discovery | effective-layer update process and version tests |
+| federal | Opportunity Zones | IRS/Treasury/CDFI frozen 2018 national archive | official SHA-pinned ZIP import | implementation ready, default off | First import still requires the exact activation ID; parcel joins/display remain separate; 2027 eligibility is never treated as effective |
 | local | zoning/city/ETJ | municipal/county GIS/planning | later/where authoritative | discovery | semantics, completeness, updates |
 | local/state/federal | wildfire/wetlands/elevation | official agencies | later phase | discovery | layer selection and screening limits |
 | local | roads/access/utilities | transport/local utility/planning | evidence signals only | discovery | legal-access versus physical-road distinction |
 
 ## Required source record
+
+Exact researched endpoints and the first bounded operational contract are maintained in [`LIVE_INGESTION_RUNBOOK.md`](LIVE_INGESTION_RUNBOOK.md) and `config/ingestion/us-tx-central-texas-v1.yaml`.
 
 Create one source-policy record containing:
 
@@ -77,3 +79,5 @@ outreach eligibility, consent/permission requirements, and suppression handling,
 - [ ] Shadow output reviewed against source
 - [ ] Production activation approved
 - [ ] Contact or outreach use separately approved when the capability includes personal/contact data
+
+The Travis TNR/TCAD record completed the access, exact ItemInfo, schema, bounded-query, immutable-storage, replay, attribution, and display-scope checks on August 13, 2026. Its approval is not transferable to TCAD's separate PDF map-download page, owner/contact fields, exports, bulk redistribution, or outreach.

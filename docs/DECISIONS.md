@@ -64,3 +64,6 @@ This log prevents unresolved business and source choices from becoming accidenta
 | A-007 | Railway hosts the MVP application plane | requested target, suitable service/worker primitives |
 | A-008 | Single-node Railway PostGIS is MVP-only with explicit HA gate | Railway native HA does not cover community PostGIS image |
 | A-009 | Acquisition outreach is a separate policy-gated engagement context | isolate sensitive contact/consent/suppression data and require human approval before provider handoff |
+| A-010 | Every application environment is live-only and fails to an empty/error state | deployed fixtures or automatic substitute records can be mistaken for actionable leads |
+| A-011 | Travis TNR/TCAD is approved only for bounded, attributed reference display of reviewed non-owner fields | exact service metadata supports informational use; export, redistribution, contact use, broadening, and valuation claims remain outside scope |
+| A-012 | Database owner credentials live only on an isolated one-shot migration service | API/acquisition roles are audited least-privilege contracts, and research history is database-derived; see ADR 0007 |

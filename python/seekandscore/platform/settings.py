@@ -1,0 +1,261 @@
+"""Typed, fail-closed runtime settings."""
+
+from enum import StrEnum
+from functools import lru_cache
+from uuid import UUID
+
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from seekandscore.acquisition.models import SourceRunProfile
+from seekandscore.geography.opportunity_zones.source import (
+    CDFI_QOZ_2018_PRIVATE_DISPLAY_APPROVAL_ID,
+)
+from seekandscore.registry.sources import (
+    TRAVIS_TCAD_ACQUISITION_APPROVAL_ID,
+    TRAVIS_TCAD_AUTHORIZED_CITIES,
+    TRAVIS_TCAD_COHORT_MAX_RECORDS,
+    TRAVIS_TCAD_COHORT_PAGE_SIZE,
+    TRAVIS_TCAD_DISPLAY_APPROVAL_ID,
+    TRAVIS_TCAD_PROOF_MAX_RECORDS,
+    TRAVIS_TCAD_PROOF_PAGE_SIZE,
+)
+
+
+class AppEnvironment(StrEnum):
+    DEVELOPMENT = "development"
+    TEST = "test"
+    PREVIEW = "preview"
+    STAGING = "staging"
+    PRODUCTION = "production"
+
+
+class DatasetMode(StrEnum):
+    LIVE = "live"
+
+
+class AlertDeliveryMode(StrEnum):
+    DISABLED = "disabled"
+    LOG = "log"
+    PROVIDER = "provider"
+
+
+class OutreachMode(StrEnum):
+    DISABLED = "disabled"
+    MANUAL = "manual"
+    PROVIDER = "provider"
+
+
+class Settings(BaseSettings):
+    """Runtime configuration loaded from environment variables.
+
+    External acquisition, alert, and outreach effects all require explicit activation.
+    Defaults are safe for a fresh checkout and a Railway preview deployment.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=None,
+        env_prefix="",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    app_name: str = "seekandscore-api"
+    app_env: AppEnvironment = AppEnvironment.DEVELOPMENT
+    host: str = "0.0.0.0"
+    port: int = Field(default=8000, ge=1, le=65535)
+    log_level: str = "INFO"
+    release_sha: str = "development"
+
+    dataset_mode: DatasetMode = DatasetMode.LIVE
+    ingestion_enabled: bool = False
+    ingestion_activation_id: str | None = None
+    ingestion_source_id: str = "travis_tcad_parcels"
+    ingestion_run_profile: SourceRunProfile = SourceRunProfile.PROOF
+    ingestion_page_size: int = Field(default=2, ge=1, le=1000)
+    ingestion_max_records: int = Field(default=2, ge=1, le=10_000)
+    ingestion_where: str = "PROP_ID IS NOT NULL AND tcad_acres >= 1"
+    ingestion_order_by: str = "OBJECTID ASC"
+    ingestion_cities: str = "DEL VALLE,MANOR"
+    ingestion_http_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    ingestion_min_request_interval_seconds: float = Field(default=1.0, ge=0.25, le=10)
+    ingestion_max_retries: int = Field(default=3, ge=0, le=5)
+    live_source_display_enabled: bool = False
+    live_source_display_approval_id: str | None = None
+    oz_2018_private_display_enabled: bool = False
+    oz_2018_private_display_approval_id: str | None = None
+    raw_artifact_root: str = "var/raw-artifacts"
+
+    object_storage_endpoint: str | None = None
+    object_storage_region: str = "auto"
+    object_storage_bucket: str | None = None
+    object_storage_access_key_id: str | None = Field(default=None, repr=False)
+    object_storage_secret_access_key: str | None = Field(default=None, repr=False)
+    object_storage_prefix: str = "raw-artifacts"
+    object_storage_force_path_style: bool = False
+
+    alert_delivery_mode: AlertDeliveryMode = AlertDeliveryMode.LOG
+    alert_delivery_provider: str | None = None
+    alert_delivery_activation_id: str | None = None
+
+    outreach_mode: OutreachMode = OutreachMode.DISABLED
+    outreach_send_enabled: bool = False
+    outreach_human_approval_required: bool = True
+    outreach_policy_id: str = "acquisition-outreach-safe-default-v1"
+    outreach_activation_id: str | None = None
+    outreach_legal_review_id: str | None = None
+    outreach_provider: str | None = None
+
+    research_writes_enabled: bool = False
+    research_internal_token: str | None = Field(default=None, repr=False)
+    research_organization_id: UUID | None = None
+    research_actor_id: UUID | None = None
+
+    database_url: str | None = None
+    redis_url: str | None = None
+
+    @model_validator(mode="after")
+    def validate_effect_activation(self) -> "Settings":
+        """Reject ambiguous or unsafe external-effect configurations."""
+
+        if (
+            self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}
+            and self.dataset_mode is not DatasetMode.LIVE
+        ):
+            raise ValueError("staging/production API requires DATASET_MODE=live")
+        if self.ingestion_enabled:
+            if self.app_env in {
+                AppEnvironment.DEVELOPMENT,
+                AppEnvironment.TEST,
+                AppEnvironment.PREVIEW,
+            }:
+                raise ValueError("ingestion cannot be enabled in development, test, or preview")
+            if self.dataset_mode is not DatasetMode.LIVE:
+                raise ValueError("enabled ingestion requires DATASET_MODE=live")
+            if self.ingestion_activation_id != TRAVIS_TCAD_ACQUISITION_APPROVAL_ID:
+                raise ValueError("enabled ingestion requires the approved INGESTION_ACTIVATION_ID")
+            if self.ingestion_source_id != "travis_tcad_parcels":
+                raise ValueError("enabled ingestion requires the approved Travis TCAD source")
+            if self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION} and not all(
+                (
+                    self.object_storage_endpoint,
+                    self.object_storage_bucket,
+                    self.object_storage_access_key_id,
+                    self.object_storage_secret_access_key,
+                )
+            ):
+                raise ValueError(
+                    "staging/production ingestion requires durable S3-compatible object storage"
+                )
+
+        allowed_where = "PROP_ID IS NOT NULL AND tcad_acres >= 1"
+        if self.ingestion_where != allowed_where:
+            raise ValueError("INGESTION_WHERE is not an approved screening predicate")
+        if self.ingestion_order_by != "OBJECTID ASC":
+            raise ValueError("INGESTION_ORDER_BY must be OBJECTID ASC")
+
+        cities = tuple(city.strip().upper() for city in self.ingestion_cities.split(",") if city)
+        if len(cities) > 20 or any(not city.replace(" ", "").isalpha() for city in cities):
+            raise ValueError("INGESTION_CITIES must contain at most 20 city names")
+        if self.ingestion_enabled:
+            if cities != TRAVIS_TCAD_AUTHORIZED_CITIES:
+                raise ValueError("enabled ingestion is limited to INGESTION_CITIES=DEL VALLE,MANOR")
+            expected_bounds = {
+                SourceRunProfile.PROOF: (
+                    TRAVIS_TCAD_PROOF_PAGE_SIZE,
+                    TRAVIS_TCAD_PROOF_MAX_RECORDS,
+                ),
+                SourceRunProfile.COHORT: (
+                    TRAVIS_TCAD_COHORT_PAGE_SIZE,
+                    TRAVIS_TCAD_COHORT_MAX_RECORDS,
+                ),
+            }
+            if (self.ingestion_page_size, self.ingestion_max_records) != expected_bounds[
+                self.ingestion_run_profile
+            ]:
+                raise ValueError("enabled ingestion bounds do not match INGESTION_RUN_PROFILE")
+        if (
+            self.live_source_display_enabled
+            and self.live_source_display_approval_id != TRAVIS_TCAD_DISPLAY_APPROVAL_ID
+        ):
+            raise ValueError(
+                "live source display requires the approved LIVE_SOURCE_DISPLAY_APPROVAL_ID"
+            )
+        if self.live_source_display_enabled and (
+            self.outreach_mode is not OutreachMode.DISABLED or self.outreach_send_enabled
+        ):
+            raise ValueError("live source display requires outreach to remain disabled")
+        if self.oz_2018_private_display_enabled:
+            if (
+                self.oz_2018_private_display_approval_id
+                != CDFI_QOZ_2018_PRIVATE_DISPLAY_APPROVAL_ID
+            ):
+                raise ValueError(
+                    "private 2018 QOZ display requires the approved "
+                    "OZ_2018_PRIVATE_DISPLAY_APPROVAL_ID"
+                )
+            if not self.live_source_display_enabled:
+                raise ValueError("private 2018 QOZ display requires approved parcel display")
+            if self.outreach_mode is not OutreachMode.DISABLED or self.outreach_send_enabled:
+                raise ValueError("private 2018 QOZ display requires outreach to remain disabled")
+
+        if self.alert_delivery_mode is AlertDeliveryMode.PROVIDER:
+            if self.app_env is not AppEnvironment.PRODUCTION:
+                raise ValueError("provider alert delivery is production-only")
+            if not self.alert_delivery_provider or not self.alert_delivery_activation_id:
+                raise ValueError(
+                    "provider alert delivery requires a provider and activation record"
+                )
+
+        if self.outreach_send_enabled:
+            if self.app_env is not AppEnvironment.PRODUCTION:
+                raise ValueError("outreach provider sends are production-only")
+            if self.outreach_mode is not OutreachMode.PROVIDER:
+                raise ValueError("enabled outreach sends require OUTREACH_MODE=provider")
+            if not self.outreach_human_approval_required:
+                raise ValueError("outreach sends require human approval")
+            if not all(
+                (
+                    self.outreach_activation_id,
+                    self.outreach_legal_review_id,
+                    self.outreach_provider,
+                    self.outreach_policy_id,
+                )
+            ):
+                raise ValueError(
+                    "outreach sends require provider, policy, legal-review, and activation records"
+                )
+
+        if self.research_writes_enabled:
+            if not self.database_url:
+                raise ValueError("research writes require DATABASE_URL")
+            if not self.live_source_display_enabled:
+                raise ValueError("research writes require approved live candidate display")
+            if not self.research_internal_token or len(self.research_internal_token) < 32:
+                raise ValueError("research writes require a 32+ character internal token")
+            if (
+                self.research_organization_id is None
+                or self.research_organization_id.int == 0
+                or self.research_actor_id is None
+                or self.research_actor_id.int == 0
+            ):
+                raise ValueError(
+                    "research writes require explicit nonzero organization and actor IDs"
+                )
+            if self.outreach_mode is not OutreachMode.DISABLED or self.outreach_send_enabled:
+                raise ValueError("research writes do not activate or permit outreach")
+
+        if (
+            self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}
+            and not self.database_url
+        ):
+            raise ValueError("staging/production API requires DATABASE_URL")
+
+        return self
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return one validated settings object per process."""
+
+    return Settings()

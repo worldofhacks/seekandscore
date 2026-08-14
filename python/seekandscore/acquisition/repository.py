@@ -1,0 +1,713 @@
+"""Durable Postgres repository and deterministic in-memory test repository."""
+
+from collections.abc import Iterable
+from typing import Protocol
+from uuid import UUID
+
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import Engine
+
+from seekandscore.acquisition.models import (
+    NormalizedParcelObservation,
+    QuarantinedRecord,
+    RawArtifact,
+    SourceRun,
+    SourceRunProfile,
+)
+from seekandscore.identity import canonical_parcel_id
+
+
+class AcquisitionRepository(Protocol):
+    def is_ready(self) -> bool: ...
+
+    def latest_run(
+        self,
+        source_id: str,
+        *,
+        run_profile: SourceRunProfile | None = None,
+    ) -> SourceRun | None: ...
+
+    def latest_complete_run(
+        self, source_id: str, *, run_profile: SourceRunProfile
+    ) -> SourceRun | None: ...
+
+    def latest_artifact(
+        self, source_id: str, *, artifact_ids: tuple[UUID, ...] | None = None
+    ) -> RawArtifact | None: ...
+
+    def save_run(self, run: SourceRun) -> None: ...
+
+    def save_artifact(self, artifact: RawArtifact) -> None: ...
+
+    def save_observations(self, observations: Iterable[NormalizedParcelObservation]) -> int: ...
+
+    def save_quarantine(self, records: Iterable[QuarantinedRecord]) -> int: ...
+
+    def list_latest_observations(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+        artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
+        cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
+    ) -> tuple[NormalizedParcelObservation, ...]: ...
+
+    def count_latest_observations(
+        self,
+        *,
+        artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
+        cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
+    ) -> int: ...
+
+
+class MemoryAcquisitionRepository:
+    def __init__(self) -> None:
+        self.runs: dict[object, SourceRun] = {}
+        self.artifacts: dict[object, RawArtifact] = {}
+        self.observations: dict[object, NormalizedParcelObservation] = {}
+        self.quarantine: dict[object, QuarantinedRecord] = {}
+
+    def is_ready(self) -> bool:
+        return True
+
+    def latest_run(
+        self,
+        source_id: str,
+        *,
+        run_profile: SourceRunProfile | None = None,
+    ) -> SourceRun | None:
+        matches = [
+            run
+            for run in self.runs.values()
+            if run.source_id == source_id
+            and (run_profile is None or run.run_profile is run_profile)
+        ]
+        return max(matches, key=lambda run: (run.started_at, str(run.id))) if matches else None
+
+    def latest_complete_run(
+        self, source_id: str, *, run_profile: SourceRunProfile
+    ) -> SourceRun | None:
+        matches = [
+            run
+            for run in self.runs.values()
+            if run.source_id == source_id
+            and run.run_profile is run_profile
+            and run.is_complete_cohort
+        ]
+        return max(matches, key=lambda run: (run.started_at, str(run.id))) if matches else None
+
+    def latest_artifact(
+        self, source_id: str, *, artifact_ids: tuple[UUID, ...] | None = None
+    ) -> RawArtifact | None:
+        selected = frozenset(artifact_ids) if artifact_ids is not None else None
+        matches = [item for item in self.artifacts.values() if item.source_id == source_id]
+        if selected is not None:
+            matches = [item for item in matches if item.id in selected]
+        return max(matches, key=lambda item: (item.retrieved_at, str(item.id))) if matches else None
+
+    def save_run(self, run: SourceRun) -> None:
+        self.runs[run.id] = run
+
+    def save_artifact(self, artifact: RawArtifact) -> None:
+        existing = next(
+            (
+                item
+                for item in self.artifacts.values()
+                if item.source_id == artifact.source_id and item.sha256 == artifact.sha256
+            ),
+            None,
+        )
+        if existing is not None and existing.model_dump() != artifact.model_dump():
+            # Content identity wins; its first retrieval metadata is immutable.
+            return
+        self.artifacts.setdefault(artifact.id, artifact)
+
+    def save_observations(self, observations: Iterable[NormalizedParcelObservation]) -> int:
+        inserted = 0
+        for observation in observations:
+            if observation.id not in self.observations:
+                self.observations[observation.id] = observation
+                inserted += 1
+        return inserted
+
+    def save_quarantine(self, records: Iterable[QuarantinedRecord]) -> int:
+        inserted = 0
+        for record in records:
+            if record.id not in self.quarantine:
+                self.quarantine[record.id] = record
+                inserted += 1
+        return inserted
+
+    def list_latest_observations(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+        artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
+        cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
+    ) -> tuple[NormalizedParcelObservation, ...]:
+        selected_artifacts = frozenset(artifact_ids) if artifact_ids is not None else None
+        selected_cities = frozenset(cities) if cities is not None else None
+        latest_by_parcel: dict[str, NormalizedParcelObservation] = {}
+        for item in self.observations.values():
+            if item.source_id != "travis_tcad_parcels":
+                continue
+            if selected_artifacts is not None and item.artifact_id not in selected_artifacts:
+                continue
+            if parser_version is not None and item.parser_version != parser_version:
+                continue
+            current = latest_by_parcel.get(item.local_parcel_id)
+            if current is None or (item.observed_at, str(item.id)) > (
+                current.observed_at,
+                str(current.id),
+            ):
+                latest_by_parcel[item.local_parcel_id] = item
+        filtered = (
+            item
+            for item in latest_by_parcel.values()
+            if _observation_matches(
+                item,
+                selected_cities=selected_cities,
+                search_query=search_query,
+                min_acres=min_acres,
+                max_acres=max_acres,
+            )
+        )
+        ordered = sorted(
+            filtered,
+            key=lambda item: (
+                -(item.tcad_acres or item.gis_acres or 0),
+                item.local_parcel_id,
+            ),
+        )
+        return tuple(ordered[offset : offset + limit])
+
+    def count_latest_observations(
+        self,
+        *,
+        artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
+        cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
+    ) -> int:
+        return len(
+            self.list_latest_observations(
+                limit=len(self.observations),
+                artifact_ids=artifact_ids,
+                parser_version=parser_version,
+                cities=cities,
+                search_query=search_query,
+                min_acres=min_acres,
+                max_acres=max_acres,
+            )
+        )
+
+
+def _observation_matches(
+    item: NormalizedParcelObservation,
+    *,
+    selected_cities: frozenset[str] | None,
+    search_query: str | None,
+    min_acres: float | None,
+    max_acres: float | None,
+) -> bool:
+    if selected_cities is not None and item.situs_city not in selected_cities:
+        return False
+    if search_query:
+        needle = search_query.casefold()
+        approved_search_fields = (
+            item.situs_address,
+            item.local_parcel_id,
+            item.situs_city,
+        )
+        if not any(needle in (value or "").casefold() for value in approved_search_fields):
+            return False
+    acreage = item.tcad_acres if item.tcad_acres is not None else item.gis_acres
+    if min_acres is not None and (acreage is None or acreage < min_acres):
+        return False
+    return not (max_acres is not None and (acreage is None or acreage > max_acres))
+
+
+metadata = sa.MetaData()
+
+source_run_table = sa.Table(
+    "source_run",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("payload", sa.JSON(), nullable=False),
+    sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+    schema="registry",
+)
+
+raw_artifact_table = sa.Table(
+    "artifact",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("sha256", sa.String(64), nullable=False),
+    sa.Column("payload", sa.JSON(), nullable=False),
+    sa.Column("retrieved_at", sa.DateTime(timezone=True), nullable=False),
+    schema="raw",
+)
+
+observation_table = sa.Table(
+    "parcel_observation",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("source_record_id", sa.Text(), nullable=False),
+    sa.Column("artifact_id", sa.Uuid(), nullable=False),
+    sa.Column("artifact_sha256", sa.String(64), nullable=False),
+    sa.Column("parser_version", sa.Text(), nullable=False),
+    sa.Column("payload", sa.JSON(), nullable=False),
+    sa.Column("jurisdiction_id", sa.Text(), nullable=False),
+    sa.Column("local_parcel_id", sa.Text(), nullable=False),
+    sa.Column("observed_at", sa.DateTime(timezone=True), nullable=False),
+    schema="observation",
+)
+
+parcel_identity_table = sa.Table(
+    "parcel",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("jurisdiction_id", sa.Text(), nullable=False),
+    sa.Column("local_parcel_id", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    schema="identity",
+)
+
+parcel_geometry_table = sa.Table(
+    "parcel_geometry",
+    metadata,
+    sa.Column("observation_id", sa.Uuid(), primary_key=True),
+    sa.Column("parcel_id", sa.Uuid(), nullable=False),
+    sa.Column("jurisdiction_id", sa.Text(), nullable=False),
+    sa.Column("local_parcel_id", sa.Text(), nullable=False),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("source_record_id", sa.Text(), nullable=False),
+    sa.Column("source_artifact_id", sa.Uuid(), nullable=False),
+    sa.Column("source_artifact_sha256", sa.String(64), nullable=False),
+    sa.Column("parser_version", sa.Text(), nullable=False),
+    sa.Column("source_srid", sa.Integer(), nullable=False),
+    sa.Column("geometry_was_repaired", sa.Boolean(), nullable=False),
+    sa.Column("geometry_repair_method", sa.Text()),
+    sa.Column("observed_at", sa.DateTime(timezone=True), nullable=False),
+    schema="geo",
+)
+
+quarantine_table = sa.Table(
+    "quarantined_record",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column("source_id", sa.Text(), nullable=False),
+    sa.Column("artifact_id", sa.Uuid(), nullable=False),
+    sa.Column("payload", sa.JSON(), nullable=False),
+    schema="observation",
+)
+
+
+class PostgresAcquisitionRepository:
+    """Postgres JSON-envelope repository preserving versioned contracts exactly."""
+
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def is_ready(self) -> bool:
+        try:
+            with self.engine.connect() as connection:
+                for table in (source_run_table, raw_artifact_table, observation_table):
+                    connection.execute(sa.select(table.c.id).limit(0))
+        except sa.exc.SQLAlchemyError:
+            return False
+        return True
+
+    def latest_run(
+        self,
+        source_id: str,
+        *,
+        run_profile: SourceRunProfile | None = None,
+    ) -> SourceRun | None:
+        statement = sa.select(source_run_table.c.payload).where(
+            source_run_table.c.source_id == source_id
+        )
+        if run_profile is not None:
+            statement = statement.where(
+                source_run_table.c.payload["run_profile"].as_string() == run_profile.value
+            )
+        statement = statement.order_by(
+            source_run_table.c.started_at.desc(), source_run_table.c.id.desc()
+        ).limit(1)
+        with self.engine.connect() as connection:
+            payload = connection.scalar(statement)
+        return SourceRun.model_validate(payload) if payload else None
+
+    def latest_complete_run(
+        self, source_id: str, *, run_profile: SourceRunProfile
+    ) -> SourceRun | None:
+        statement = (
+            sa.select(source_run_table.c.payload)
+            .where(
+                source_run_table.c.source_id == source_id,
+                source_run_table.c.payload["run_profile"].as_string() == run_profile.value,
+                source_run_table.c.payload["status"]
+                .as_string()
+                .in_(("succeeded", "succeeded_unchanged")),
+                source_run_table.c.payload["partial"].as_boolean().is_(False),
+            )
+            .order_by(source_run_table.c.started_at.desc(), source_run_table.c.id.desc())
+        )
+        with self.engine.connect() as connection:
+            payloads = connection.scalars(statement).all()
+        for payload in payloads:
+            run = SourceRun.model_validate(payload)
+            if run.is_complete_cohort:
+                return run
+        return None
+
+    def latest_artifact(
+        self, source_id: str, *, artifact_ids: tuple[UUID, ...] | None = None
+    ) -> RawArtifact | None:
+        if artifact_ids == ():
+            return None
+        statement = sa.select(raw_artifact_table.c.payload).where(
+            raw_artifact_table.c.source_id == source_id
+        )
+        if artifact_ids is not None:
+            statement = statement.where(raw_artifact_table.c.id.in_(artifact_ids))
+        statement = statement.order_by(
+            raw_artifact_table.c.retrieved_at.desc(), raw_artifact_table.c.id.desc()
+        ).limit(1)
+        with self.engine.connect() as connection:
+            payload = connection.scalar(statement)
+        return RawArtifact.model_validate(payload) if payload else None
+
+    def save_run(self, run: SourceRun) -> None:
+        statement = pg_insert(source_run_table).values(
+            id=run.id,
+            source_id=run.source_id,
+            payload=run.model_dump(mode="json"),
+            started_at=run.started_at,
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=[source_run_table.c.id],
+            set_={"payload": statement.excluded.payload},
+        )
+        with self.engine.begin() as connection:
+            connection.execute(statement)
+
+    def save_artifact(self, artifact: RawArtifact) -> None:
+        statement = pg_insert(raw_artifact_table).values(
+            id=artifact.id,
+            source_id=artifact.source_id,
+            sha256=artifact.sha256,
+            payload=artifact.model_dump(mode="json"),
+            retrieved_at=artifact.retrieved_at,
+        )
+        statement = statement.on_conflict_do_nothing(
+            index_elements=[raw_artifact_table.c.source_id, raw_artifact_table.c.sha256]
+        )
+        with self.engine.begin() as connection:
+            connection.execute(statement)
+
+    def save_observations(self, observations: Iterable[NormalizedParcelObservation]) -> int:
+        materialized = tuple(observations)
+        values = [
+            {
+                "id": item.id,
+                "source_id": item.source_id,
+                "source_record_id": item.source_record_id,
+                "artifact_id": item.artifact_id,
+                "artifact_sha256": item.artifact_sha256,
+                "parser_version": item.parser_version,
+                "observed_at": item.observed_at,
+                # Geometry coordinates are deliberately excluded from the API-readable JSONB
+                # envelope. They exist only in geo.parcel_geometry's restricted typed column.
+                "payload": item.model_dump(
+                    mode="json",
+                    exclude={"geometry_srid", "geometry_geojson"},
+                ),
+            }
+            for item in materialized
+        ]
+        if not values:
+            return 0
+        statement = (
+            pg_insert(observation_table)
+            .values(values)
+            .on_conflict_do_nothing()
+            .returning(observation_table.c.id)
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+            inserted_ids = tuple(result.scalars())
+            self._save_parcel_geometries(connection, materialized)
+        return len(inserted_ids)
+
+    @staticmethod
+    def _save_parcel_geometries(
+        connection: sa.Connection,
+        observations: tuple[NormalizedParcelObservation, ...],
+    ) -> None:
+        geometry_observations = tuple(
+            item
+            for item in observations
+            if item.geometry_srid is not None and item.geometry_geojson is not None
+        )
+        if not geometry_observations:
+            return
+        identity_statement = (
+            pg_insert(parcel_identity_table)
+            .values(
+                [
+                    {
+                        "id": canonical_parcel_id(item.jurisdiction_id, item.local_parcel_id),
+                        "jurisdiction_id": item.jurisdiction_id,
+                        "local_parcel_id": item.local_parcel_id,
+                        "created_at": item.observed_at,
+                    }
+                    for item in geometry_observations
+                ]
+            )
+            .on_conflict_do_nothing()
+        )
+        connection.execute(identity_statement)
+        geometry_statement = sa.text(
+            """
+            WITH parsed AS (
+                SELECT ST_Transform(
+                    ST_SetSRID(ST_GeomFromGeoJSON(:geometry_geojson), :source_srid),
+                    3857
+                ) AS source_geometry
+            ), normalized AS (
+                SELECT source_geometry,
+                       ST_Multi(
+                           ST_CollectionExtract(ST_MakeValid(source_geometry), 3)
+                       ) AS normalized_geometry
+                FROM parsed
+            )
+            INSERT INTO geo.parcel_geometry (
+                observation_id, parcel_id, jurisdiction_id, local_parcel_id,
+                source_id, source_record_id,
+                source_artifact_id, source_artifact_sha256, parser_version, source_srid,
+                geometry, geometry_was_repaired, geometry_repair_method, observed_at
+            )
+            SELECT :observation_id, :parcel_id, :jurisdiction_id, :local_parcel_id,
+                   :source_id, :source_record_id,
+                   :source_artifact_id, :source_artifact_sha256, :parser_version, :source_srid,
+                   normalized_geometry, NOT ST_IsValid(source_geometry),
+                   CASE WHEN ST_IsValid(source_geometry) THEN NULL
+                        ELSE 'postgis_st_makevalid_collection_extract_v1' END,
+                   :observed_at
+            FROM normalized
+            ON CONFLICT (observation_id) DO NOTHING
+            """
+        )
+        connection.execute(
+            geometry_statement,
+            [
+                {
+                    "observation_id": item.id,
+                    "parcel_id": canonical_parcel_id(item.jurisdiction_id, item.local_parcel_id),
+                    "jurisdiction_id": item.jurisdiction_id,
+                    "local_parcel_id": item.local_parcel_id,
+                    "source_id": item.source_id,
+                    "source_record_id": item.source_record_id,
+                    "source_artifact_id": item.artifact_id,
+                    "source_artifact_sha256": item.artifact_sha256,
+                    "parser_version": item.parser_version,
+                    "source_srid": item.geometry_srid,
+                    "geometry_geojson": item.geometry_geojson,
+                    "observed_at": item.observed_at,
+                }
+                for item in geometry_observations
+            ],
+        )
+
+    def save_quarantine(self, records: Iterable[QuarantinedRecord]) -> int:
+        values = [
+            {
+                "id": item.id,
+                "source_id": item.source_id,
+                "artifact_id": item.artifact_id,
+                "payload": item.model_dump(mode="json"),
+            }
+            for item in records
+        ]
+        if not values:
+            return 0
+        statement = (
+            pg_insert(quarantine_table)
+            .values(values)
+            .on_conflict_do_nothing()
+            .returning(quarantine_table.c.id)
+        )
+        with self.engine.begin() as connection:
+            result = connection.execute(statement)
+            inserted_ids = tuple(result.scalars())
+        return len(inserted_ids)
+
+    def list_latest_observations(
+        self,
+        *,
+        limit: int,
+        offset: int = 0,
+        artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
+        cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
+    ) -> tuple[NormalizedParcelObservation, ...]:
+        if artifact_ids == ():
+            return ()
+        snapshot_filters = [observation_table.c.source_id == "travis_tcad_parcels"]
+        if artifact_ids is not None:
+            snapshot_filters.append(observation_table.c.artifact_id.in_(artifact_ids))
+        if parser_version is not None:
+            snapshot_filters.append(observation_table.c.parser_version == parser_version)
+        ranked = (
+            sa.select(
+                observation_table.c.payload,
+                observation_table.c.source_record_id,
+                sa.func.row_number()
+                .over(
+                    partition_by=observation_table.c.source_record_id,
+                    order_by=(
+                        sa.cast(
+                            observation_table.c.payload["observed_at"].as_string(),
+                            sa.DateTime(timezone=True),
+                        ).desc(),
+                        observation_table.c.id.desc(),
+                    ),
+                )
+                .label("version_rank"),
+            )
+            .where(*snapshot_filters)
+            .cte("ranked_observations")
+        )
+        filters = [ranked.c.version_rank == 1]
+        payload = ranked.c.payload
+        if cities is not None:
+            filters.append(payload["situs_city"].as_string().in_(cities))
+        if search_query:
+            pattern = f"%{_escape_like(search_query)}%"
+            filters.append(
+                sa.or_(
+                    sa.func.coalesce(payload["situs_address"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                    sa.func.coalesce(payload["local_parcel_id"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                    sa.func.coalesce(payload["situs_city"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                )
+            )
+        acreage = sa.func.coalesce(
+            payload["tcad_acres"].as_float(), payload["gis_acres"].as_float()
+        )
+        if min_acres is not None:
+            filters.append(acreage >= min_acres)
+        if max_acres is not None:
+            filters.append(acreage <= max_acres)
+        statement = (
+            sa.select(ranked.c.payload)
+            .where(*filters)
+            .order_by(
+                acreage.desc().nullslast(),
+                payload["local_parcel_id"].as_string(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        with self.engine.connect() as connection:
+            rows = connection.scalars(statement).all()
+        return tuple(NormalizedParcelObservation.model_validate(row) for row in rows)
+
+    def count_latest_observations(
+        self,
+        *,
+        artifact_ids: tuple[UUID, ...] | None = None,
+        parser_version: str | None = None,
+        cities: tuple[str, ...] | None = None,
+        search_query: str | None = None,
+        min_acres: float | None = None,
+        max_acres: float | None = None,
+    ) -> int:
+        if artifact_ids == ():
+            return 0
+        snapshot_filters = [observation_table.c.source_id == "travis_tcad_parcels"]
+        if artifact_ids is not None:
+            snapshot_filters.append(observation_table.c.artifact_id.in_(artifact_ids))
+        if parser_version is not None:
+            snapshot_filters.append(observation_table.c.parser_version == parser_version)
+        ranked = (
+            sa.select(
+                observation_table.c.payload,
+                observation_table.c.source_record_id,
+                sa.func.row_number()
+                .over(
+                    partition_by=observation_table.c.source_record_id,
+                    order_by=(
+                        sa.cast(
+                            observation_table.c.payload["observed_at"].as_string(),
+                            sa.DateTime(timezone=True),
+                        ).desc(),
+                        observation_table.c.id.desc(),
+                    ),
+                )
+                .label("version_rank"),
+            )
+            .where(*snapshot_filters)
+            .cte("ranked_observations")
+        )
+        filters = [ranked.c.version_rank == 1]
+        payload = ranked.c.payload
+        if cities is not None:
+            filters.append(payload["situs_city"].as_string().in_(cities))
+        if search_query:
+            pattern = f"%{_escape_like(search_query)}%"
+            filters.append(
+                sa.or_(
+                    sa.func.coalesce(payload["situs_address"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                    sa.func.coalesce(payload["local_parcel_id"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                    sa.func.coalesce(payload["situs_city"].as_string(), "").ilike(
+                        pattern, escape="\\"
+                    ),
+                )
+            )
+        acreage = sa.func.coalesce(
+            payload["tcad_acres"].as_float(), payload["gis_acres"].as_float()
+        )
+        if min_acres is not None:
+            filters.append(acreage >= min_acres)
+        if max_acres is not None:
+            filters.append(acreage <= max_acres)
+        statement = sa.select(sa.func.count()).select_from(ranked).where(*filters)
+        with self.engine.connect() as connection:
+            return int(connection.scalar(statement) or 0)
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

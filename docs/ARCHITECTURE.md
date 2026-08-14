@@ -46,7 +46,7 @@ flowchart TB
   API --> AI
 ```
 
-Only the web and API receive public network traffic. Workers, scheduler, Redis, PostGIS, and internal telemetry remain private.
+Only the authenticated web origin receives public network traffic in the current deployment. The API, workers, scheduler, Redis, PostGIS, object storage, and internal telemetry remain private; the web uses a same-environment private API origin.
 
 ## 3. Bounded contexts
 
@@ -111,6 +111,8 @@ It never calls an LLM for numerical decisions. Ranking reads stable inputs for a
 Owns watchlists, notes, research tasks, next actions, deal status, offers, auction checklists, acquisition outcomes, and feedback labels.
 
 This is intentionally CRM-lite. It consumes engagement outcomes and can request a new outreach case, but it does not own contact points, messages, suppressions, or permissions.
+
+The implemented first slice is an organization-scoped `ResearchCase`: one durable case per candidate, a version-matched status/note/next-action record, append-only revisions, and audit events. Its dossier presents server-derived evidence gates. Saving research never satisfies an evidence gate and cannot enable contact or outbound controls.
 
 ### 3.11 Engagement
 
