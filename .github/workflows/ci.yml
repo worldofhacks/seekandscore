@@ -77,6 +77,8 @@ jobs:
       - run: uv run mypy python services
       - run: env -u DATABASE_URL uv run pytest tests/backend
       - run: uv run python -m seekandscore.db.migrate upgrade
+      - name: Postgres repository integration
+        run: SEEKANDSCORE_TEST_DATABASE_URL="$DATABASE_URL" env -u DATABASE_URL uv run pytest tests/backend/test_postgres_repository_integration.py
 
   web:
     name: Web quality gates

@@ -249,11 +249,11 @@ class PostgresAcquisitionRepository:
             sa.select(source_run_table.c.payload)
             .where(
                 source_run_table.c.source_id == source_id,
-                source_run_table.c.payload["run_profile"].astext == run_profile.value,
-                source_run_table.c.payload["status"].astext.in_(
-                    ("succeeded", "succeeded_unchanged")
-                ),
-                source_run_table.c.payload["partial"].astext == "false",
+                source_run_table.c.payload["run_profile"].as_string() == run_profile.value,
+                source_run_table.c.payload["status"]
+                .as_string()
+                .in_(("succeeded", "succeeded_unchanged")),
+                source_run_table.c.payload["partial"].as_boolean().is_(False),
             )
             .order_by(source_run_table.c.started_at.desc(), source_run_table.c.id.desc())
         )
@@ -373,7 +373,7 @@ class PostgresAcquisitionRepository:
         if artifact_ids is not None:
             filters.append(observation_table.c.artifact_id.in_(artifact_ids))
         if cities is not None:
-            filters.append(observation_table.c.payload["situs_city"].astext.in_(cities))
+            filters.append(observation_table.c.payload["situs_city"].as_string().in_(cities))
         ranked = (
             sa.select(
                 observation_table.c.payload,
@@ -381,7 +381,7 @@ class PostgresAcquisitionRepository:
                 .over(
                     partition_by=observation_table.c.source_record_id,
                     order_by=sa.cast(
-                        observation_table.c.payload["observed_at"].astext,
+                        observation_table.c.payload["observed_at"].as_string(),
                         sa.DateTime(timezone=True),
                     ).desc(),
                 )
@@ -394,13 +394,8 @@ class PostgresAcquisitionRepository:
             sa.select(ranked.c.payload)
             .where(ranked.c.version_rank == 1)
             .order_by(
-                sa.cast(
-                    ranked.c.payload["tcad_acres"].astext,
-                    sa.Float(),
-                )
-                .desc()
-                .nullslast(),
-                ranked.c.payload["local_parcel_id"].astext,
+                ranked.c.payload["tcad_acres"].as_float().desc().nullslast(),
+                ranked.c.payload["local_parcel_id"].as_string(),
             )
             .limit(limit)
             .offset(offset)
@@ -424,7 +419,7 @@ class PostgresAcquisitionRepository:
             statement = statement.where(observation_table.c.artifact_id.in_(artifact_ids))
         if cities is not None:
             statement = statement.where(
-                observation_table.c.payload["situs_city"].astext.in_(cities)
+                observation_table.c.payload["situs_city"].as_string().in_(cities)
             )
         with self.engine.connect() as connection:
             return int(connection.scalar(statement) or 0)

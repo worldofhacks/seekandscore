@@ -109,6 +109,35 @@ def test_postgres_insert_count_uses_returned_ids_not_indeterminate_rowcount() ->
     assert inserted == 2
 
 
+def test_postgres_snapshot_queries_use_supported_sqlalchemy_json_accessors() -> None:
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.scalars.return_value.all.return_value = []
+    connection.scalar.return_value = 0
+    repository = PostgresAcquisitionRepository(engine)
+    artifact_id = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+    assert (
+        repository.latest_complete_run("travis_tcad_parcels", run_profile=SourceRunProfile.COHORT)
+        is None
+    )
+    assert (
+        repository.list_latest_observations(
+            limit=25,
+            artifact_ids=(artifact_id,),
+            cities=("DEL VALLE", "MANOR"),
+        )
+        == ()
+    )
+    assert (
+        repository.count_latest_observations(
+            artifact_ids=(artifact_id,),
+            cities=("DEL VALLE", "MANOR"),
+        )
+        == 0
+    )
+
+
 def test_live_projection_labels_assessor_values_and_oz_as_unverified() -> None:
     repository = LiveCandidateRepository(
         seeded_repository(),
