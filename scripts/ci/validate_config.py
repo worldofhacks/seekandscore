@@ -74,6 +74,8 @@ def require_safe_runtime_defaults() -> list[str]:
         failures.append("web staging/production runtime must enforce private password length")
     if "research writes require the exact private Railway API origin" not in web_entrypoint:
         failures.append("web research writes must require the exact private API origin")
+    if "WEB_PUBLIC_ORIGIN must be an exact HTTPS origin" not in web_entrypoint:
+        failures.append("web research writes must require an exact public HTTPS origin")
     if "saved research is disabled in development and test runtimes" not in web_entrypoint:
         failures.append("web research writes must fail closed in development/test runtimes")
 
@@ -93,6 +95,8 @@ def require_safe_runtime_defaults() -> list[str]:
             '"http://api.railway.internal:8000"',
             "research proxy must pin the private Railway API origin",
         ),
+        ("WEB_PUBLIC_ORIGIN", "research proxy must use the configured public origin"),
+        ('url.protocol !== "https:"', "research proxy must require a public HTTPS origin"),
     ):
         if marker not in research_proxy:
             failures.append(description)

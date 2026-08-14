@@ -64,7 +64,9 @@ Choose one non-Texas county with a different disclosure and tax-sale regime. A s
 - Web remains the sole public origin and requires private access authentication.
 - API remains domainless and reachable only on Railway's private network.
 - Saved research requires explicit `RESEARCH_ORGANIZATION_ID`, `RESEARCH_ACTOR_ID`, a 32+ character server-only token, approved live display, and disabled outreach.
-- Research mutations require same-origin JSON and strong quoted `If-Match` versions.
+- Research mutations require same-origin JSON, an exact configured public HTTPS
+  origin independent of Railway's internal request URL, and strong quoted
+  `If-Match` versions.
 - Federal geography import requires its dedicated exact activation ID, private PostGIS, and durable private object storage.
 - Geography display and parcel membership are separate approvals from raw import.
 - No new source enters ranking or contact workflows until proof, replay, freshness, rights, and source-failure behavior pass.

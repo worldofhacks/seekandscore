@@ -30,8 +30,12 @@ export function validateResearchMutation(request: NextRequest): NextResponse | n
   if (!contentType.toLocaleLowerCase().startsWith("application/json")) {
     return problem(415, "Saved-research mutations require application/json.");
   }
+  const expectedOrigin = researchPublicOrigin(request);
+  if (!expectedOrigin) {
+    return problem(503, "Saved research public origin is not configured.");
+  }
   const origin = request.headers.get("origin");
-  if (!origin || origin !== request.nextUrl.origin) {
+  if (!origin || origin !== expectedOrigin) {
     return problem(403, "Saved-research mutation origin was rejected.");
   }
   const fetchSite = request.headers.get("sec-fetch-site");
@@ -52,7 +56,8 @@ export async function proxyResearchRequest(
   const internalToken = process.env.RESEARCH_INTERNAL_TOKEN;
   const operator = request.headers.get(OPERATOR_HEADER);
   const apiOrigin = researchApiOrigin(baseUrl);
-  if (!apiOrigin || !internalToken || internalToken.length < 32) {
+  const publicOrigin = researchPublicOrigin(request);
+  if (!apiOrigin || !publicOrigin || !internalToken || internalToken.length < 32) {
     return problem(503, "Saved research is not configured.");
   }
   if (!operator) {
@@ -105,6 +110,39 @@ export async function proxyResearchRequest(
     });
   } catch {
     return problem(502, "The private research service is unavailable.");
+  }
+}
+
+function researchPublicOrigin(request: NextRequest): string | null {
+  const appEnv = process.env.APP_ENV;
+  const localRuntime =
+    process.env.NODE_ENV !== "production" &&
+    (appEnv === undefined || appEnv === "development" || appEnv === "test");
+  if (localRuntime) {
+    return request.nextUrl.origin;
+  }
+  if (appEnv !== "staging" && appEnv !== "production") {
+    return null;
+  }
+
+  const value = process.env.WEB_PUBLIC_ORIGIN;
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash ||
+      value !== url.origin
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
   }
 }
 

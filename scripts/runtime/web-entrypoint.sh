@@ -62,6 +62,26 @@ case "$APP_ENV" in
           exit 1
           ;;
       esac
+      if ! node -e '
+        const value = process.env.WEB_PUBLIC_ORIGIN ?? "";
+        try {
+          const url = new URL(value);
+          if (
+            url.protocol !== "https:" ||
+            url.username ||
+            url.password ||
+            url.pathname !== "/" ||
+            url.search ||
+            url.hash ||
+            value !== url.origin
+          ) process.exit(1);
+        } catch {
+          process.exit(1);
+        }
+      '; then
+        echo "web startup refused: WEB_PUBLIC_ORIGIN must be an exact HTTPS origin when research writes are enabled" >&2
+        exit 1
+      fi
       research_internal_token_value=${RESEARCH_INTERNAL_TOKEN:-}
       if [ "${#research_internal_token_value}" -lt 32 ]; then
         echo "web startup refused: RESEARCH_INTERNAL_TOKEN must be at least 32 characters when research writes are enabled" >&2

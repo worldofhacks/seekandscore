@@ -49,6 +49,13 @@ path except the data-free `/api/health` Railway check. Keep the API on Railway
 private networking when live display is enabled; a public API domain is not
 protected by the web credential.
 
+If saved-research writes are enabled, also set `WEB_PUBLIC_ORIGIN` to the exact
+public HTTPS web origin without a trailing slash (for example,
+`https://web-staging-7db2.up.railway.app`). The web refuses to start if this
+value is missing, non-HTTPS, contains credentials/path/query/fragment, or is not
+already in canonical origin form. Mutation requests must carry that exact
+browser `Origin`; Railway's internal request URL is deliberately not trusted.
+
 See [the full deployment plan](../../docs/RAILWAY_DEPLOYMENT.md).
 
 ## First live-ingestion service

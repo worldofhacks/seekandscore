@@ -30,6 +30,22 @@ function largeMutation(): NextRequest {
   });
 }
 
+function railwayMutation(origin: string): NextRequest {
+  return new NextRequest(
+    "http://web.railway.internal:3000/api/research/cases/example",
+    {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        origin,
+        "sec-fetch-site": "same-origin",
+        "x-seekandscore-operator": "operator",
+      },
+      body: JSON.stringify({ status: "watching" }),
+    },
+  );
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -64,6 +80,63 @@ describe("research proxy", () => {
         }),
       ),
     ).toBeNull();
+  });
+
+  it("accepts the configured public origin when Railway presents an internal request URL", () => {
+    vi.stubEnv("APP_ENV", "staging");
+    vi.stubEnv("WEB_PUBLIC_ORIGIN", "https://web-staging-7db2.up.railway.app");
+
+    expect(
+      validateResearchMutation(
+        railwayMutation("https://web-staging-7db2.up.railway.app"),
+      ),
+    ).toBeNull();
+    expect(
+      validateResearchMutation(railwayMutation("https://attacker.example"))?.status,
+    ).toBe(403);
+  });
+
+  it("fails closed on missing or invalid deployment public origins", () => {
+    vi.stubEnv("APP_ENV", "production");
+    expect(
+      validateResearchMutation(
+        railwayMutation("https://web-staging-7db2.up.railway.app"),
+      )?.status,
+    ).toBe(503);
+
+    for (const invalid of [
+      "http://web-staging-7db2.up.railway.app",
+      "https://operator@web-staging-7db2.up.railway.app",
+      "https://web-staging-7db2.up.railway.app/",
+      "https://web-staging-7db2.up.railway.app/path",
+      "https://web-staging-7db2.up.railway.app?preview=true",
+      "https://web-staging-7db2.up.railway.app#fragment",
+      "not-an-origin",
+    ]) {
+      vi.stubEnv("WEB_PUBLIC_ORIGIN", invalid);
+      expect(
+        validateResearchMutation(
+          railwayMutation("https://web-staging-7db2.up.railway.app"),
+        )?.status,
+      ).toBe(503);
+    }
+  });
+
+  it("does not contact the private API when deployment public-origin config is missing", async () => {
+    vi.stubEnv("APP_ENV", "staging");
+    vi.stubEnv("RESEARCH_WRITES_ENABLED", "true");
+    vi.stubEnv("API_BASE_URL", "http://api.railway.internal:8000");
+    vi.stubEnv("RESEARCH_INTERNAL_TOKEN", "t".repeat(40));
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal("fetch", upstreamFetch);
+
+    const response = await proxyResearchRequest(
+      railwayMutation("https://web-staging-7db2.up.railway.app"),
+      "/v1/research-cases/example",
+    );
+
+    expect(response.status).toBe(503);
+    expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
   it("fails closed when research writes are disabled or operator identity is absent", async () => {
@@ -108,6 +181,7 @@ describe("research proxy", () => {
   it("never sends the token to an unapproved deployment origin", async () => {
     vi.stubEnv("APP_ENV", "staging");
     vi.stubEnv("RESEARCH_WRITES_ENABLED", "true");
+    vi.stubEnv("WEB_PUBLIC_ORIGIN", "https://web.example.test");
     vi.stubEnv("API_BASE_URL", "https://attacker.example");
     vi.stubEnv("RESEARCH_INTERNAL_TOKEN", "t".repeat(40));
     const upstreamFetch = vi.fn();

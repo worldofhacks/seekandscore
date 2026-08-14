@@ -209,6 +209,7 @@ LOG_LEVEL
 PUBLIC_APP_URL
 API_BASE_URL
 ALLOWED_ORIGINS
+WEB_PUBLIC_ORIGIN
 WEB_PRIVATE_ACCESS_ENABLED
 WEB_PRIVATE_ACCESS_USERNAME
 WEB_PRIVATE_ACCESS_PASSWORD
@@ -260,6 +261,15 @@ Basic authentication protects the web origin only. Do not expose a separate
 public API domain when live display is enabled. Route the web service to the API
 over Railway private networking with `API_BASE_URL`, or add an equivalent API
 authentication boundary before assigning an API public domain.
+
+When `RESEARCH_WRITES_ENABLED=true`, set `WEB_PUBLIC_ORIGIN` to the web
+service's exact canonical HTTPS origin, with no trailing slash, credentials,
+path, query, or fragment. For example,
+`https://web-staging-7db2.up.railway.app`. Startup rejects a missing or invalid
+value, and every mutation compares the browser `Origin` header exactly against
+it. Do not derive this trust boundary from `Host`, `X-Forwarded-Host`, or the
+internal request URL because Railway terminates the public request before it
+reaches Next.js.
 
 ### Source variables
 
